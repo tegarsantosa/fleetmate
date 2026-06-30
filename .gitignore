@@ -1,0 +1,7 @@
+.tmp/
+media/*
+!media/.gitkeep
+node_modules/
+__pycache__/
+*.pyc
+.DS_STORE

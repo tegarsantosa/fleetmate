@@ -1,0 +1,84 @@
+name: fleetmate
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fleetmate
+      POSTGRES_PASSWORD: fleetmate
+      POSTGRES_DB: fleetmate
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./.tmp/postgres_data:/var/lib/postgresql/data
+      - ./api/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fleetmate -d fleetmate"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://fleetmate:fleetmate@postgres:5432/fleetmate
+      MEDIA_DIR: /media
+    volumes:
+      - ./media:/media
+      - ./api/src:/app/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  vision-service:
+    build:
+      context: ./ai/vision-service
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: http://api:8000
+      MEDIA_DIR: /media
+    volumes:
+      - ./media:/media
+      - ./ai/vision-service/src:/app/src
+    ports:
+      - "8001:8001"
+    depends_on:
+      - api
+
+  packing-service:
+    build:
+      context: ./ai/packing-service
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: http://api:8000
+      DATABASE_URL: postgresql://fleetmate:fleetmate@postgres:5432/fleetmate
+    volumes:
+      - ./ai/packing-service/src:/app/src
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  app:
+    build:
+      context: ./app
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+      VITE_VISION_BASE_URL: http://localhost:8001
+      VITE_PACKING_BASE_URL: http://localhost:8002
+    volumes:
+      - ./app/src:/app/src
+      - ./media:/app/public/media
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
