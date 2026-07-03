@@ -1,6 +1,6 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-CREATE TYPE container_status AS ENUM ('available', 'loading', 'full', 'dispatched');
+CREATE TYPE container_status AS ENUM ('available', 'loading', 'full', 'shipped');
 CREATE TYPE packing_status AS ENUM ('pending', 'planned', 'failed');
 
 CREATE TABLE containers (
@@ -69,3 +69,38 @@ INSERT INTO containers (code, name, length_cm, width_cm, height_cm, status) VALU
 ('FMATE-002', 'Mobil L300', 246, 160, 138, 'available'),
 ('FMATE-003', 'Truk Box Sedang', 600, 235, 239, 'available'),
 ('FMATE-004', 'Truk Box Fuso', 789, 245, 239, 'available');
+
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE api_keys (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    key TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_used TIMESTAMPTZ
+);
+
+CREATE TABLE scheduled_shipments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    container_id UUID NOT NULL REFERENCES containers(id) ON DELETE CASCADE,
+    scheduled_date TIMESTAMPTZ NOT NULL,
+    destination TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'scheduled',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO users (username, email, password_hash) VALUES
+('admin', 'admin@fleetmate.local', 'mock_hash_for_now');
+
+INSERT INTO api_keys (key, name) VALUES
+('fm_live_7382y49h9823yr32f8', 'ERP Integration Key');
+
+INSERT INTO scheduled_shipments (container_id, scheduled_date, destination) VALUES
+((SELECT id FROM containers WHERE code = 'FMATE-001'), now() + interval '1 day', 'Jakarta Distribution Center'),
+((SELECT id FROM containers WHERE code = 'FMATE-003'), now() + interval '2 days', 'Surabaya Port');

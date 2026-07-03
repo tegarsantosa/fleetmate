@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .routers import containers, scans, boxes, packing
+from .routers import containers, scans, boxes, packing, api_keys, accounts, inventory, analytics
 
 app = FastAPI(title="FleetMate API")
 
@@ -19,6 +19,10 @@ app.include_router(containers.router)
 app.include_router(scans.router)
 app.include_router(boxes.router)
 app.include_router(packing.router)
+app.include_router(api_keys.router)
+app.include_router(accounts.router)
+app.include_router(inventory.router)
+app.include_router(analytics.router)
 
 
 @app.get("/health")

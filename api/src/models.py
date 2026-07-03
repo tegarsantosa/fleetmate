@@ -10,7 +10,7 @@ class Base(DeclarativeBase):
 
 
 container_status = ENUM(
-    "available", "loading", "full", "dispatched",
+    "available", "loading", "full", "shipped",
     name="container_status", create_type=False,
 )
 packing_status = ENUM(
@@ -101,3 +101,36 @@ class PackingItem(Base):
 
     plan: Mapped[PackingPlan] = relationship(back_populates="items")
     box: Mapped[Box] = relationship(back_populates="items")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    username: Mapped[str] = mapped_column(String, unique=True)
+    email: Mapped[str] = mapped_column(String, unique=True)
+    password_hash: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String, unique=True)
+    name: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_used: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ScheduledShipment(Base):
+    __tablename__ = "scheduled_shipments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    container_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("containers.id"))
+    scheduled_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    destination: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, default="scheduled")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    container: Mapped[Container] = relationship()

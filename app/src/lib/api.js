@@ -11,13 +11,33 @@ async function request(url, options = {}) {
   return response.json();
 }
 
+function jsonBody(data) {
+  return {
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  };
+}
+
 export const api = {
   listContainers: () => request(`${API_BASE_URL}/containers`),
-  listBoxes: (status) =>
-    request(`${API_BASE_URL}/boxes${status ? `?status=${status}` : ""}`),
+  createContainer: (data) => request(`${API_BASE_URL}/containers`, { method: "POST", ...jsonBody(data) }),
+  updateContainer: (id, data) => request(`${API_BASE_URL}/containers/${id}`, { method: "PUT", ...jsonBody(data) }),
+  deleteContainer: (id) => request(`${API_BASE_URL}/containers/${id}`, { method: "DELETE" }),
+  resetContainer: (id) => request(`${API_BASE_URL}/containers/${id}/reset`, { method: "POST" }),
+  dispatchContainer: (id) => request(`${API_BASE_URL}/containers/${id}/dispatch`, { method: "POST" }),
+  listBoxes: (status) => request(`${API_BASE_URL}/boxes${status ? `?status=${status}` : ""}`),
   listPlans: () => request(`${API_BASE_URL}/packing-plans`),
-  resetContainer: (id) =>
-    request(`${API_BASE_URL}/containers/${id}/reset`, { method: "POST" }),
+  getDashboard: () => request(`${API_BASE_URL}/analytics/dashboard`),
+  getMe: () => request(`${API_BASE_URL}/accounts/me`),
+  updateMe: (data) => request(`${API_BASE_URL}/accounts/me`, { method: "PUT", ...jsonBody(data) }),
+  listApiKeys: () => request(`${API_BASE_URL}/api-keys/`),
+  createApiKey: (data) => request(`${API_BASE_URL}/api-keys/`, { method: "POST", ...jsonBody(data) }),
+  deleteApiKey: (id) => request(`${API_BASE_URL}/api-keys/${id}`, { method: "DELETE" }),
+  listInventoryContainers: () => request(`${API_BASE_URL}/inventory/containers`),
+  listShipments: () => request(`${API_BASE_URL}/inventory/shipments`),
+  createShipment: (data) => request(`${API_BASE_URL}/inventory/shipments`, { method: "POST", ...jsonBody(data) }),
+  updateShipment: (id, data) => request(`${API_BASE_URL}/inventory/shipments/${id}`, { method: "PUT", ...jsonBody(data) }),
+  deleteShipment: (id) => request(`${API_BASE_URL}/inventory/shipments/${id}`, { method: "DELETE" }),
 };
 
 export const vision = {

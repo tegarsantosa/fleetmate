@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from .packer import pack_boxes, Space, select_best_container, ContainerCandidate
+from .packer import pack_boxes, Space, select_best_container, ContainerCandidate, _split_space
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://api:8000")
 
@@ -42,21 +42,50 @@ async def _fetch_containers(client: httpx.AsyncClient):
     return response.json()
 
 
-def _initial_space(container: dict) -> Space:
+async def _fetch_container_plans(client: httpx.AsyncClient, container_id: str):
+    response = await client.get(f"{API_BASE_URL}/packing-plans")
+    response.raise_for_status()
+    plans = response.json()
+    return [p for p in plans if p["container_id"] == container_id]
+
+
+def _recreate_free_spaces(container: dict, plans: list) -> list[Space]:
     length = float(container["length_cm"])
     width = float(container["width_cm"])
     height = float(container["height_cm"])
-    used = float(container["used_volume_cm3"])
 
-    if used <= 0:
-        return Space(0, 0, 0, length, width, height)
+    free_spaces = [Space(0, 0, 0, length, width, height)]
 
-    occupied_height = min(used / (length * width), height)
-    remaining_height = height - occupied_height
-    if remaining_height <= 1e-3:
-        return Space(0, 0, height, length, width, 0)
+    plans = sorted(plans, key=lambda p: p["created_at"])
+    
+    for plan in plans:
+        items = plan["items"]
+        items = sorted(
+            items, 
+            key=lambda i: float(i["placed_length_cm"]) * float(i["placed_width_cm"]) * float(i["placed_height_cm"]),
+            reverse=True
+        )
+        
+        for item in items:
+            l = float(item["placed_length_cm"])
+            w = float(item["placed_width_cm"])
+            h = float(item["placed_height_cm"])
+            x = float(item["pos_x"])
+            y = float(item["pos_y"])
+            z = float(item["pos_z"])
+            
+            best_space_idx = None
+            for idx, space in enumerate(free_spaces):
+                if abs(space.x - x) < 1e-4 and abs(space.y - y) < 1e-4 and abs(space.z - z) < 1e-4:
+                    best_space_idx = idx
+                    break
+            
+            if best_space_idx is not None:
+                space = free_spaces.pop(best_space_idx)
+                free_spaces.extend(_split_space(space, l, w, h))
+                free_spaces = sorted(free_spaces, key=lambda s: s.volume, reverse=True)
 
-    return Space(0, 0, occupied_height, length, width, remaining_height)
+    return free_spaces
 
 
 @app.post("/pack")
@@ -95,14 +124,17 @@ async def run_packing(payload: PackRequest):
                 break
 
             container = next(c for c in containers if c["id"] == chosen.id)
-            free_space = _initial_space(container)
+            container_plans = await _fetch_container_plans(client, container["id"])
+            
+            # Recreate all existing free spaces exactly as they are in reality
+            free_spaces = _recreate_free_spaces(container, container_plans)
 
             placed, unplaced, _ = pack_boxes(
                 float(container["length_cm"]),
                 float(container["width_cm"]),
                 float(container["height_cm"]),
                 remaining_boxes,
-                existing_spaces=[free_space],
+                existing_spaces=free_spaces,
             )
 
             if not placed:
