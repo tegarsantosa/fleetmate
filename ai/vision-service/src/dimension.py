@@ -50,13 +50,13 @@ def _disparity(left_gray: np.ndarray, right_gray: np.ndarray) -> float:
     return float(np.median(valid))
 
 
-def estimate_dimensions(left_bytes: bytes, right_bytes: bytes | None):
-    left_img = _decode(left_bytes)
-    left_gray = cv2.cvtColor(left_img, cv2.COLOR_BGR2GRAY)
-    bbox = _largest_contour_box(left_gray)
+def estimate_dimensions(top_bytes: bytes, side_bytes: bytes | None):
+    top_img = _decode(top_bytes)
+    top_gray = cv2.cvtColor(top_img, cv2.COLOR_BGR2GRAY)
+    bbox = _largest_contour_box(top_gray)
 
     if bbox is None:
-        h, w = left_gray.shape[:2]
+        h, w = top_gray.shape[:2]
         bbox = (int(w * 0.25), int(h * 0.25), int(w * 0.5), int(h * 0.5))
 
     x, y, w_px, h_px = bbox
@@ -64,12 +64,12 @@ def estimate_dimensions(left_bytes: bytes, right_bytes: bytes | None):
     distance_cm = 100.0
     confidence = 0.55
 
-    if right_bytes is not None:
+    if side_bytes is not None:
         try:
-            right_img = _decode(right_bytes)
-            right_gray = cv2.cvtColor(right_img, cv2.COLOR_BGR2GRAY)
-            if right_gray.shape == left_gray.shape:
-                disparity = _disparity(left_gray, right_gray)
+            side_img = _decode(side_bytes)
+            side_gray = cv2.cvtColor(side_img, cv2.COLOR_BGR2GRAY)
+            if side_gray.shape == top_gray.shape:
+                disparity = _disparity(top_gray, side_gray)
                 if disparity > 0:
                     distance_cm = (FOCAL_LENGTH_PX * BASELINE_CM) / disparity
                     confidence = 0.9

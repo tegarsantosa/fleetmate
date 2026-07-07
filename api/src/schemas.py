@@ -34,16 +34,16 @@ class ContainerUpdate(BaseModel):
 
 
 class ScanCreate(BaseModel):
-    camera_left_path: str | None = None
-    camera_right_path: str | None = None
+    camera_top_path: str | None = None
+    camera_side_path: str | None = None
     raw_meta: dict = {}
 
 
 class ScanOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
-    camera_left_path: str | None
-    camera_right_path: str | None
+    camera_top_path: str | None
+    camera_side_path: str | None
     raw_meta: dict
     created_at: datetime
 

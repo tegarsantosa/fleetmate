@@ -1,59 +1,80 @@
-import React, { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import React, { useEffect, useState, useMemo, useCallback } from "react";
 import Container3D from "../components/Container3D.jsx";
 import { api, packing } from "../lib/api.js";
+import { Camera, Zap, RefreshCw, Truck, Box, Cpu } from "lucide-react";
 
 export default function Visualizer() {
   const [containers, setContainers] = useState([]);
   const [plans, setPlans] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
-  const [pendingCount, setPendingCount] = useState(0);
+  const [pendingBoxes, setPendingBoxes] = useState([]);
   const [error, setError] = useState(null);
   const [animKey, setAnimKey] = useState(0);
   const [dispatching, setDispatching] = useState(false);
   const [dispatchAnimId, setDispatchAnimId] = useState(null);
+  const [isPacking, setIsPacking] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [containerList, planList, pendingBoxes] = await Promise.all([
-      api.listContainers(),
-      api.listPlans(),
-      api.listBoxes("pending"),
-    ]);
-    const available = containerList.filter(c => c.status !== "shipped");
-    setContainers(available);
-    setPlans(planList);
-    setPendingCount(pendingBoxes.length);
-    setSelectedId((prev) => {
-      if (prev == null && available.length > 0) return available[0].id;
-      if (available.find(c => c.id === prev)) return prev;
-      return available.length > 0 ? available[0].id : null;
-    });
-    return pendingBoxes.length;
+    try {
+      const [containerList, planList, pendingBoxesData] = await Promise.all([
+        api.listContainers(),
+        api.listPlans(),
+        api.listBoxes("pending"),
+      ]);
+      const available = containerList.filter(c => c.status !== "shipped");
+      setContainers(available);
+      setPlans(planList);
+      
+      // Sort pending boxes by created_at ascending (FIFO)
+      const sortedBoxes = pendingBoxesData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      setPendingBoxes(sortedBoxes);
+      
+      setSelectedId((prev) => {
+        if (prev == null && available.length > 0) return available[0].id;
+        if (available.find(c => c.id === prev)) return prev;
+        return available.length > 0 ? available[0].id : null;
+      });
+      return sortedBoxes.length;
+    } catch (err) {
+      setError(err.message);
+      return 0;
+    }
   }, []);
 
+  // Poll only for boxes count and status updates
   useEffect(() => {
     let cancelled = false;
-    let isPacking = false;
 
     const poll = async () => {
-      if (cancelled || isPacking) return;
-      try {
-        const count = await refresh();
-        if (count > 0 && !cancelled) {
-          isPacking = true;
-          await packing.run();
-          await refresh();
-          isPacking = false;
-        }
-      } catch (err) {
-        if (!cancelled) setError(err.message);
-        isPacking = false;
-      }
+      if (cancelled) return;
+      await refresh();
     };
 
     poll();
-    const interval = setInterval(poll, 2000);
+    const interval = setInterval(poll, 2500);
     return () => { cancelled = true; clearInterval(interval); };
   }, [refresh]);
+
+  const handleManualPack = async () => {
+    setIsPacking(true);
+    try {
+      await packing.run();
+      await refresh();
+      setAnimKey(k => k + 1); // re-trigger drops
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsPacking(false);
+    }
+  };
+
+  const handlePickBestVehicle = () => {
+    const eligible = containers.filter(c => c.status !== 'shipped' && c.status !== 'full');
+    if (eligible.length > 0) {
+      eligible.sort((a, b) => (b.max_volume_cm3 - b.used_volume_cm3) - (a.max_volume_cm3 - a.used_volume_cm3));
+      setSelectedId(eligible[0].id);
+    }
+  };
 
   const handleResetContainer = async (id) => {
     await api.resetContainer(id);
@@ -103,35 +124,92 @@ export default function Visualizer() {
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Load Simulator</h1>
-          <p className="page-subtitle">AI-powered 3D bin packing visualization</p>
+          <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            Load Simulator
+            <span style={{ fontSize: 10, padding: "4px 8px", background: "var(--accent-blue)", color: "#fff", borderRadius: 12, display: "flex", alignItems: "center", gap: 4 }}>
+              <Cpu size={12} /> AI Powered
+            </span>
+          </h1>
+          <p className="page-subtitle">Digital-twin 3D bin packing engine</p>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          {pendingCount > 0 ? (
-            <span className="info-chip">
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--warning)", animation: "pulse 1s infinite" }} />
-              Packing {pendingCount} box(es)...
-            </span>
-          ) : (
-            <span className="info-chip" style={{ background: "var(--success-soft)", color: "var(--success)", borderColor: "rgba(34, 197, 94, 0.2)" }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--success)", animation: "pulse 2s infinite" }} />
-              Listening for scans
-            </span>
-          )}
+        <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+          <button className="btn-primary" style={{ background: "var(--accent-blue)" }} onClick={() => window.location.href = '/camera'}>
+            <Camera size={16} /> Open Camera Scan
+          </button>
         </div>
       </div>
 
       {error && (
-        <div style={{ background: "var(--danger-soft)", color: "var(--danger)", padding: "10px 16px", borderRadius: "var(--radius)", marginBottom: 16, fontSize: 13 }}>
+        <div style={{ background: "var(--danger)", color: "#fff", padding: "10px 16px", borderRadius: 8, marginBottom: 16, fontSize: 13 }}>
           {error}
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 20, alignItems: "start" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "380px 1fr", gap: 24, alignItems: "start" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          
+          <div className="card" style={{ background: "linear-gradient(135deg, var(--bg-surface) 0%, rgba(138, 129, 255, 0.05) 100%)", border: "1px solid var(--accent-blue)" }}>
+            <h3 style={{ color: "var(--accent-blue)", display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <Zap size={16} /> Pending Boxes Queue
+            </h3>
+            
+            <div style={{ 
+              maxHeight: 180, 
+              overflowY: "auto", 
+              background: "var(--bg-primary)", 
+              borderRadius: 8,
+              border: "1px solid var(--border-color)",
+              marginBottom: 16
+            }}>
+              {pendingBoxes.length > 0 ? pendingBoxes.map((box, i) => (
+                <div key={box.id} style={{ 
+                  padding: "8px 12px", 
+                  borderBottom: "1px solid var(--border-color)", 
+                  display: "flex", 
+                  justifyContent: "space-between",
+                  alignItems: "center"
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ width: 24, height: 24, borderRadius: 12, background: "var(--bg-surface)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600 }}>
+                      {i + 1}
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 500 }}>{box.label || `Box ${box.id.substring(0,6)}`}</span>
+                  </div>
+                  <div className="mono-num" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                    {box.length_cm} &times; {box.width_cm} &times; {box.height_cm} cm
+                  </div>
+                </div>
+              )) : (
+                <div style={{ padding: 24, textAlign: "center", color: "var(--text-secondary)", fontSize: 13 }}>
+                  No boxes waiting to be packed
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button 
+                className="btn-primary" 
+                style={{ flex: 1, background: "var(--accent-blue)" }}
+                onClick={handleManualPack}
+                disabled={pendingBoxes.length === 0 || isPacking}
+              >
+                {isPacking ? <RefreshCw size={16} className="spin" /> : <Box size={16} />}
+                Pack Collected Boxes
+              </button>
+              <button 
+                className="btn-secondary" 
+                style={{ padding: "8px 12px" }}
+                onClick={handlePickBestVehicle}
+                title="Pick Best Fit Vehicle"
+              >
+                <Truck size={16} />
+              </button>
+            </div>
+          </div>
+
           <div className="card">
-            <h3>Fleet Containers</h3>
-            <div className="container-list" style={{ marginTop: 10 }}>
+            <h3>Vehicle Picker</h3>
+            <div className="container-list" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }}>
               {containers.map((c) => {
                 const utilization = c.max_volume_cm3 > 0 ? c.used_volume_cm3 / c.max_volume_cm3 : 0;
                 return (
@@ -139,70 +217,60 @@ export default function Visualizer() {
                     key={c.id}
                     className={`container-row ${c.id === selectedId ? "selected" : ""}`}
                     onClick={() => { setSelectedId(c.id); setAnimKey((k) => k + 1); }}
+                    style={{ padding: 12, border: "1px solid var(--border-color)", borderRadius: 12, cursor: "pointer", display: "flex", flexDirection: "column", gap: 8 }}
                   >
-                    <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div style={{ fontWeight: 600, fontSize: 13 }}>{c.name}</div>
-                      <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 2 }}>{c.code}</div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-                        <div className="utilization-bar" style={{ flex: 1 }}>
-                          <div className="utilization-fill" style={{ width: `${Math.min(utilization * 100, 100)}%` }} />
-                        </div>
-                        <span style={{ fontSize: 11, color: "var(--text-secondary)", minWidth: 32, textAlign: "right" }}>
-                          {Math.round(utilization * 100)}%
-                        </span>
-                      </div>
+                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: c.status === "full" ? "var(--danger)" : "var(--success)" }} title={c.status} />
                     </div>
-                    <span className={`badge ${c.status}`}>{c.status}</span>
+                    <div className="mono-num" style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                      {c.length_cm} &times; {c.width_cm} &times; {c.height_cm} cm
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ height: 4, background: "var(--bg-primary)", flex: 1, borderRadius: 2, overflow: "hidden" }}>
+                        <div style={{ width: `${Math.min(utilization * 100, 100)}%`, height: "100%", background: utilization > 0.9 ? "var(--success)" : "var(--accent-blue)" }} />
+                      </div>
+                      <span className="mono-num" style={{ fontSize: 10 }}>{Math.round(utilization * 100)}%</span>
+                    </div>
                   </div>
                 );
               })}
               {containers.length === 0 && (
-                <p style={{ color: "var(--text-secondary)", fontSize: 13, padding: 12 }}>No available containers</p>
+                <p style={{ color: "var(--text-secondary)", fontSize: 13, padding: 12, gridColumn: "1 / -1" }}>No available vehicles</p>
               )}
             </div>
           </div>
 
           {selectedContainer && (
             <div className="card">
-              <h3>Load Info</h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
-                <div className="info-chip">
-                  Dimensions: <strong>{selectedContainer.length_cm} × {selectedContainer.width_cm} × {selectedContainer.height_cm} cm</strong>
+              <h3>Load Plan Details</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12, marginBottom: 20 }}>
+                <div style={{ padding: 12, background: "var(--bg-surface)", borderRadius: 8 }}>
+                  <div style={{ fontSize: 11, color: "var(--text-secondary)", textTransform: "uppercase" }}>Boxes Loaded</div>
+                  <div className="mono-num" style={{ fontSize: 24, fontWeight: 700 }}>{totalBoxesLoaded}</div>
                 </div>
-                <div className="info-chip">
-                  Max Volume: <strong>{(selectedContainer.max_volume_cm3 / 1000000).toFixed(2)} m³</strong>
-                </div>
-                {totalBoxesLoaded > 0 ? (
-                  <>
-                    <div className="info-chip">
-                      Boxes Loaded: <strong>{totalBoxesLoaded}</strong>
-                    </div>
-                    <div className="info-chip">
-                      Utilization: <strong>{(currentUtilization * 100).toFixed(1)}%</strong>
-                    </div>
-                  </>
-                ) : (
-                  <div className="info-chip">
-                    Status: <strong>Empty. Ready to pack</strong>
+                <div style={{ padding: 12, background: "var(--bg-surface)", borderRadius: 8 }}>
+                  <div style={{ fontSize: 11, color: "var(--text-secondary)", textTransform: "uppercase" }}>Space Used</div>
+                  <div className="mono-num" style={{ fontSize: 24, fontWeight: 700, color: currentUtilization > 0.9 ? "var(--success)" : "inherit" }}>
+                    {(currentUtilization * 100).toFixed(1)}%
                   </div>
-                )}
+                </div>
               </div>
 
-              <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+              <div style={{ display: "flex", gap: 10 }}>
                 {totalBoxesLoaded > 0 && (
                   <button
-                    className="btn-success btn-sm"
+                    className="btn-success"
                     style={{ flex: 1 }}
                     onClick={() => handleDispatch(selectedContainer.id)}
                     disabled={dispatching}
                   >
-                    {isDispatching ? "🚛 Releasing..." : "🚛 Release Shipment"}
+                    {isDispatching ? "Releasing..." : "Release Shipment"}
                   </button>
                 )}
                 {totalBoxesLoaded > 0 && (
                   <button
-                    className="btn-danger btn-sm"
-                    style={{ flex: 1 }}
+                    className="btn-secondary"
                     onClick={() => handleResetContainer(selectedContainer.id)}
                     disabled={dispatching}
                   >
@@ -214,10 +282,17 @@ export default function Visualizer() {
           )}
         </div>
 
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+        <div className="card" style={{ padding: 0, overflow: "hidden", height: "100%" }}>
           <Container3D key={animKey} container={selectedContainer} items={itemsForSelected} isDispatching={isDispatching} />
         </div>
       </div>
+      
+      <style>{`
+        .spin { animation: spin 1s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .container-row:hover { border-color: var(--accent-blue); background: var(--bg-surface); }
+        .container-row.selected { border-color: var(--accent-blue); background: var(--bg-surface); box-shadow: 0 0 0 1px var(--accent-blue); }
+      `}</style>
     </div>
   );
 }

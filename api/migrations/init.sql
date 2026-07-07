@@ -18,8 +18,8 @@ CREATE TABLE containers (
 
 CREATE TABLE scans (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    camera_left_path TEXT,
-    camera_right_path TEXT,
+    camera_top_path TEXT,
+    camera_side_path TEXT,
     raw_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

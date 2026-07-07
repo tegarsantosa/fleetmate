@@ -1,8 +1,8 @@
 import React, { useRef, useState } from "react";
 import { vision } from "../lib/api.js";
 
-const DEFAULT_LEFT = "http://192.168.1.50:81/stream";
-const DEFAULT_RIGHT = "http://192.168.1.51:81/stream";
+const DEFAULT_TOP = "http://fleetmate-cam-C414.local";
+const DEFAULT_SIDE = "http://fleetmate-cam-0C1F.local";
 
 function captureFrame(imgEl, canvasEl) {
   if (!imgEl || !canvasEl || !imgEl.complete) return null;
@@ -14,18 +14,18 @@ function captureFrame(imgEl, canvasEl) {
 }
 
 export default function CameraController() {
-  const [leftUrl, setLeftUrl] = useState(DEFAULT_LEFT);
-  const [rightUrl, setRightUrl] = useState(DEFAULT_RIGHT);
+  const [topUrl, setTopUrl] = useState(DEFAULT_TOP);
+  const [sideUrl, setSideUrl] = useState(DEFAULT_SIDE);
   const [connected, setConnected] = useState(false);
   const [label, setLabel] = useState("");
   const [scanning, setScanning] = useState(false);
   const [lastResult, setLastResult] = useState(null);
   const [error, setError] = useState(null);
 
-  const leftImgRef = useRef(null);
-  const rightImgRef = useRef(null);
-  const leftCanvasRef = useRef(null);
-  const rightCanvasRef = useRef(null);
+  const topImgRef = useRef(null);
+  const sideImgRef = useRef(null);
+  const topCanvasRef = useRef(null);
+  const sideCanvasRef = useRef(null);
 
   const handleConnect = () => {
     setError(null);
@@ -41,10 +41,10 @@ export default function CameraController() {
     setScanning(true);
     setError(null);
     try {
-      const leftBlob = await captureFrame(leftImgRef.current, leftCanvasRef.current);
-      const rightBlob = await captureFrame(rightImgRef.current, rightCanvasRef.current);
-      if (!leftBlob) throw new Error("Left camera frame not ready");
-      const result = await vision.scan(leftBlob, rightBlob, label || undefined);
+      const topBlob = await captureFrame(topImgRef.current, topCanvasRef.current);
+      const sideBlob = await captureFrame(sideImgRef.current, sideCanvasRef.current);
+      if (!topBlob) throw new Error("Top camera frame not ready");
+      const result = await vision.scan(topBlob, sideBlob, label || undefined);
       setLastResult(result);
     } catch (err) {
       setError(err.message);
@@ -74,12 +74,12 @@ export default function CameraController() {
         <h3>Connection</h3>
         <div className="grid grid-2" style={{ marginTop: 12 }}>
           <div className="form-group">
-            <label>Left Camera URL</label>
-            <input value={leftUrl} onChange={(e) => setLeftUrl(e.target.value)} placeholder="http://192.168.1.50:81/stream" />
+            <label>Top Camera URL</label>
+            <input value={topUrl} onChange={(e) => setTopUrl(e.target.value)} placeholder="http://192.168.1.50:81/stream" />
           </div>
           <div className="form-group">
-            <label>Right Camera URL</label>
-            <input value={rightUrl} onChange={(e) => setRightUrl(e.target.value)} placeholder="http://192.168.1.51:81/stream" />
+            <label>Side Camera URL</label>
+            <input value={sideUrl} onChange={(e) => setSideUrl(e.target.value)} placeholder="http://192.168.1.51:81/stream" />
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4 }}>
@@ -99,17 +99,17 @@ export default function CameraController() {
       {connected && (
         <div className="grid grid-2" style={{ marginBottom: 20 }}>
           <div className="card">
-            <h3>Left Camera</h3>
+            <h3>Top Camera</h3>
             <div style={{ marginTop: 12 }}>
-              <img ref={leftImgRef} src={leftUrl} alt="left stream" crossOrigin="anonymous" style={{ width: "100%", borderRadius: "var(--radius)", background: "#000" }} />
-              <canvas ref={leftCanvasRef} className="preview" style={{ display: "none" }} />
+              <img ref={topImgRef} src={topUrl} alt="top stream" crossOrigin="anonymous" style={{ width: "100%", borderRadius: "var(--radius)", background: "#000" }} />
+              <canvas ref={topCanvasRef} className="preview" style={{ display: "none" }} />
             </div>
           </div>
           <div className="card">
-            <h3>Right Camera</h3>
+            <h3>Side Camera</h3>
             <div style={{ marginTop: 12 }}>
-              <img ref={rightImgRef} src={rightUrl} alt="right stream" crossOrigin="anonymous" style={{ width: "100%", borderRadius: "var(--radius)", background: "#000" }} />
-              <canvas ref={rightCanvasRef} className="preview" style={{ display: "none" }} />
+              <img ref={sideImgRef} src={sideUrl} alt="side stream" crossOrigin="anonymous" style={{ width: "100%", borderRadius: "var(--radius)", background: "#000" }} />
+              <canvas ref={sideCanvasRef} className="preview" style={{ display: "none" }} />
             </div>
           </div>
         </div>
@@ -119,9 +119,7 @@ export default function CameraController() {
         <div className="card">
           <h3>Scan Result</h3>
           <div className="info-panel" style={{ marginTop: 12 }}>
-            <div className="info-chip">Length <strong>{lastResult.box.length_cm} cm</strong></div>
-            <div className="info-chip">Width <strong>{lastResult.box.width_cm} cm</strong></div>
-            <div className="info-chip">Height <strong>{lastResult.box.height_cm} cm</strong></div>
+            <div className="info-chip">Dimensions <strong>{lastResult.box.length_cm} &times; {lastResult.box.width_cm} &times; {lastResult.box.height_cm} cm</strong></div>
             <div className="info-chip">Confidence <strong>{(lastResult.box.confidence * 100).toFixed(1)}%</strong></div>
           </div>
           {lastResult.vision_meta && (

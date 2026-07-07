@@ -20,7 +20,7 @@ echo "checking vision-service health..."
 curl -sf "${VISION_URL}/health" | tee /dev/stderr
 echo
 
-CURL_ARGS=(-sS -X POST "${VISION_URL}/scan?label=${LABEL}" -F "camera_left=@${LEFT_IMAGE};type=image/jpeg")
+CURL_ARGS=(-sS -X POST "${VISION_URL}/scan?label=${LABEL}" -F "camera_top=@${LEFT_IMAGE};type=image/jpeg")
 
 if [[ -n "$RIGHT_IMAGE" ]]; then
   if [[ ! -f "$RIGHT_IMAGE" ]]; then

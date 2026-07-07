@@ -246,20 +246,17 @@ export default function Container3D({ container, items, isDispatching }) {
       >
         <fog attach="fog" args={["#0a0c10", cameraDistance * 2, cameraDistance * 6]} />
 
-        <ambientLight intensity={0.35} />
+        <ambientLight intensity={0.4} />
         <directionalLight
           position={[10, 20, 10]}
-          intensity={1.8}
+          intensity={1.2}
           castShadow
           shadow-mapSize={2048}
-          shadow-camera-far={50}
-          shadow-camera-left={-10}
-          shadow-camera-right={10}
-          shadow-camera-top={10}
-          shadow-camera-bottom={-10}
           shadow-bias={-0.0001}
         />
-        <directionalLight position={[-5, 8, -5]} intensity={0.3} color="#a855f7" />
+        <spotLight position={[-5, 12, -5]} intensity={2} color="#0bc5ea" angle={0.6} penumbra={0.8} castShadow />
+        <spotLight position={[5, 15, 8]} intensity={1.5} color="#8a81ff" angle={0.5} penumbra={1} castShadow />
+        <spotLight position={[0, 10, -8]} intensity={1} color="#ff8709" angle={0.8} penumbra={0.5} />
 
         <Environment preset="night" />
 

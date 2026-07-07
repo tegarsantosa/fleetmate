@@ -41,10 +41,10 @@ export const api = {
 };
 
 export const vision = {
-  scan: (leftBlob, rightBlob, label) => {
+  scan: (topBlob, sideBlob, label) => {
     const form = new FormData();
-    form.append("camera_left", leftBlob, "left.jpg");
-    if (rightBlob) form.append("camera_right", rightBlob, "right.jpg");
+    form.append("camera_top", topBlob, "top.jpg");
+    if (sideBlob) form.append("camera_side", sideBlob, "side.jpg");
     const query = label ? `?label=${encodeURIComponent(label)}` : "";
     return request(`${VISION_BASE_URL}/scan${query}`, {
       method: "POST",
