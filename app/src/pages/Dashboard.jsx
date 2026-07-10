@@ -1,41 +1,42 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api.js";
+import { useCountUp, useRiseIn, fmtInt, prefersReducedMotion } from "../lib/motion.js";
 import anime from "animejs";
-import { Search, Bell, Activity, DollarSign, Package, Truck, ArrowUpRight, Plus, Box, CheckCircle, TrendingUp } from "lucide-react";
+import {
+  Activity, Package, Truck, ArrowUpRight, ScanLine, CalendarClock, Gauge, RefreshCw, Boxes,
+} from "lucide-react";
 
+/* ---------- charts ---------- */
 function Sparkline({ data, color }) {
-  const svgRef = useRef();
   const pathRef = useRef();
 
   useEffect(() => {
     if (!pathRef.current) return;
-    
-    // Animate the sparkline stroke
+    if (document.visibilityState === "hidden" || prefersReducedMotion()) return;
     anime({
       targets: pathRef.current,
       strokeDashoffset: [anime.setDashoffset, 0],
-      easing: 'easeInOutSine',
-      duration: 1500,
-      delay: function(el, i) { return i * 250 },
-      direction: 'alternate',
-      loop: false
+      easing: "easeInOutSine",
+      duration: 1400,
     });
   }, [data]);
 
-  // Generate SVG path from data array
   const max = Math.max(...data);
   const min = Math.min(...data);
   const range = max - min || 1;
   const w = 100;
   const h = 30;
-  const points = data.map((val, i) => {
-    const x = (i / (data.length - 1)) * w;
-    const y = h - ((val - min) / range) * h;
-    return `${x},${y}`;
-  }).join(" L ");
+  const points = data
+    .map((val, i) => {
+      const x = (i / (data.length - 1 || 1)) * w;
+      const y = h - ((val - min) / range) * h;
+      return `${x},${y}`;
+    })
+    .join(" L ");
 
   return (
-    <svg ref={svgRef} width="100%" height="40" viewBox={`0 -5 100 40`} preserveAspectRatio="none">
+    <svg width="100%" height="38" viewBox="0 -5 100 40" preserveAspectRatio="none">
       <path
         ref={pathRef}
         d={`M ${points}`}
@@ -44,21 +45,26 @@ function Sparkline({ data, color }) {
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
       />
     </svg>
   );
 }
 
-function DonutChart({ percentage, color, label, size = 120 }) {
+function DonutChart({ percentage, color, label, size = 116 }) {
   const circleRef = useRef();
-  
+
   useEffect(() => {
     if (!circleRef.current) return;
+    if (document.visibilityState === "hidden" || prefersReducedMotion()) {
+      circleRef.current.setAttribute("stroke-dasharray", `${percentage}, 100`);
+      return;
+    }
     anime({
       targets: circleRef.current,
-      strokeDasharray: [`0, 100`, `${percentage}, 100`],
-      easing: 'easeOutQuart',
-      duration: 1200
+      strokeDasharray: ["0, 100", `${percentage}, 100`],
+      easing: "easeOutQuart",
+      duration: 1200,
     });
   }, [percentage]);
 
@@ -67,245 +73,443 @@ function DonutChart({ percentage, color, label, size = 120 }) {
       <svg width="100%" height="100%" viewBox="0 0 36 36">
         <path
           d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-          fill="none"
-          stroke="var(--border-color)"
-          strokeWidth="3"
+          fill="none" stroke="var(--border-color)" strokeWidth="3"
         />
         <path
           ref={circleRef}
           d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-          fill="none"
-          stroke={color}
-          strokeWidth="3"
-          strokeDasharray="0, 100"
-          strokeLinecap="round"
+          fill="none" stroke={color} strokeWidth="3" strokeDasharray="0, 100" strokeLinecap="round"
         />
       </svg>
       <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center" }}>
-        <div className="mono-num" style={{ fontSize: "20px", fontWeight: "700" }}>{percentage}%</div>
-        <div style={{ fontSize: "10px", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</div>
+        <div className="mono-num" style={{ fontSize: 19, fontWeight: 700 }}>{Math.round(percentage)}%</div>
+        <div style={{ fontSize: 8, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", maxWidth: 70 }}>{label}</div>
       </div>
     </div>
   );
 }
 
+/* ---------- KPI card ---------- */
+function KpiCard({ title, value, format, icon: Icon, tint, spark, footer, delta }) {
+  const valueRef = useCountUp(value, { format });
+  const deltaCls = delta == null ? null : delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+  return (
+    <div className="card" data-animate="rise">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+        <div>
+          <h3>{title}</h3>
+          <p className="stat-value" ref={valueRef} style={{ marginTop: 6 }}>0</p>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+          <div className="stat-icon" style={{ background: `color-mix(in srgb, ${tint} 12%, transparent)`, color: tint }}>
+            <Icon size={18} />
+          </div>
+          {deltaCls && (
+            <span className={`kpi-delta ${deltaCls}`}>
+              {delta > 0 ? "+" : ""}{delta}{typeof delta === "number" && !Number.isInteger(delta) ? "" : ""}
+            </span>
+          )}
+        </div>
+      </div>
+      {spark && spark.length > 1 && <Sparkline data={spark} color={tint} />}
+      {footer && <div className="stat-trend">{footer}</div>}
+    </div>
+  );
+}
+
+/* ---------- helpers ---------- */
+function withinDays(dateStr, from, to) {
+  const diff = (Date.now() - new Date(dateStr).getTime()) / 86400000;
+  return diff >= from && diff < to;
+}
+
+function dailyCounts(records, days) {
+  const counts = new Array(days).fill(0);
+  const now = Date.now();
+  for (const r of records) {
+    const diff = Math.floor((now - new Date(r.created_at).getTime()) / 86400000);
+    if (diff >= 0 && diff < days) counts[days - 1 - diff] += 1;
+  }
+  return counts;
+}
+
+function relTime(dateStr) {
+  const s = Math.max(0, (Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (s < 60) return `${Math.floor(s)}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+const STATUS_COLORS = {
+  available: "var(--success)",
+  loading: "var(--warning)",
+  full: "var(--danger)",
+  shipped: "var(--info)",
+};
+
+const RANGES = [
+  { label: "7D", days: 7 },
+  { label: "14D", days: 14 },
+  { label: "30D", days: 30 },
+];
+
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [containers, setContainers] = useState([]);
+  const [boxes, setBoxes] = useState([]);
+  const [plans, setPlans] = useState([]);
+  const [shipments, setShipments] = useState([]);
+  const [error, setError] = useState(null);
+  const [rangeDays, setRangeDays] = useState(7);
+  const [refreshing, setRefreshing] = useState(false);
+  const scopeRef = useRiseIn([stats !== null]);
 
-  useEffect(() => {
-    api.getDashboard().then(setStats).catch(console.error);
-    api.listContainers().then(setContainers).catch(console.error);
+  const load = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const [s, c, b, p, sh] = await Promise.all([
+        api.getDashboard(),
+        api.listContainers(),
+        api.listBoxes(),
+        api.listPlans(),
+        api.listShipments().catch(() => []),
+      ]);
+      setStats(s);
+      setContainers(c);
+      setBoxes(b);
+      setPlans(p);
+      setShipments(sh);
+      setError(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRefreshing(false);
+    }
   }, []);
 
+  useEffect(() => { load(); }, [load]);
+
+  const derived = useMemo(() => {
+    const active = containers.filter((c) => c.status !== "shipped");
+    const fleetMax = active.reduce((s, c) => s + Number(c.max_volume_cm3), 0);
+    const fleetUsed = active.reduce((s, c) => s + Number(c.used_volume_cm3), 0);
+    const statusCounts = containers.reduce((acc, c) => {
+      acc[c.status] = (acc[c.status] || 0) + 1;
+      return acc;
+    }, {});
+
+    const boxesInWindow = boxes.filter((b) => withinDays(b.created_at, 0, rangeDays)).length;
+    const boxesPrevWindow = boxes.filter((b) => withinDays(b.created_at, rangeDays, rangeDays * 2)).length;
+    const plansInWindow = plans.filter((p) => withinDays(p.created_at, 0, rangeDays)).length;
+    const plansPrevWindow = plans.filter((p) => withinDays(p.created_at, rangeDays, rangeDays * 2)).length;
+
+    const scannedVolume = boxes.reduce((s, b) => s + Number(b.volume_cm3 || 0), 0);
+    const pendingCount = boxes.filter((b) => b.status === "pending").length;
+
+    return {
+      active: active.length,
+      fleetPct: fleetMax > 0 ? (fleetUsed / fleetMax) * 100 : 0,
+      fleetUsedM3: fleetUsed / 1_000_000,
+      fleetMaxM3: fleetMax / 1_000_000,
+      statusCounts,
+      scannedVolume,
+      pendingCount,
+      boxSeries: dailyCounts(boxes, rangeDays),
+      planSeries: dailyCounts(plans, rangeDays),
+      boxDelta: boxesInWindow - boxesPrevWindow,
+      planDelta: plansInWindow - plansPrevWindow,
+    };
+  }, [containers, boxes, plans, rangeDays]);
+
+  const containerCode = useMemo(() => {
+    const map = {};
+    for (const c of containers) map[c.id] = c.code;
+    return map;
+  }, [containers]);
+
+  const recentPlans = useMemo(
+    () => [...plans].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 6),
+    [plans]
+  );
+
+  const activityFeed = useMemo(() => {
+    const events = [
+      ...boxes.map((b) => ({
+        at: b.created_at,
+        icon: ScanLine,
+        tint: "var(--data-blue)",
+        title: `${b.label || `Box ${b.id.substring(0, 6)}`} digitized`,
+        sub: `${Number(b.length_cm)}×${Number(b.width_cm)}×${Number(b.height_cm)} cm · ${(Number(b.confidence) * 100).toFixed(0)}% confidence`,
+      })),
+      ...plans.map((p) => ({
+        at: p.created_at,
+        icon: Boxes,
+        tint: "var(--accent)",
+        title: `Plan packed into ${containerCode[p.container_id] || "vehicle"}`,
+        sub: `${p.box_count} boxes · ${(p.volume_utilization * 100).toFixed(1)}% volume`,
+      })),
+      ...shipments.map((s) => ({
+        at: s.created_at,
+        icon: CalendarClock,
+        tint: "var(--data-amber)",
+        title: `Shipment scheduled → ${s.destination}`,
+        sub: new Date(s.scheduled_date).toLocaleString(),
+      })),
+    ];
+    return events.sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 9);
+  }, [boxes, plans, shipments, containerCode]);
+
+  if (error) return <div className="alert error">{error}</div>;
+
   if (!stats) {
-    return <div className="page"><div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100%" }}><div className="mono-num">Loading...</div></div></div>;
+    return (
+      <div>
+        <div className="page-header">
+          <div>
+            <h1 className="page-title">Dashboard</h1>
+            <p className="page-subtitle">Operations overview — scans, packing plans, fleet capacity</p>
+          </div>
+        </div>
+        <div className="grid grid-4">
+          {[0, 1, 2, 3].map((i) => <div key={i} className="skeleton" style={{ height: 150 }} />)}
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div>
-      <div className="page-header" style={{ marginBottom: "32px" }}>
+    <div ref={scopeRef}>
+      <div className="page-header">
         <div>
-          <h1 className="page-title">Fleet Dashboard</h1>
-          <p className="page-subtitle">Real-time overview of your fleet operations and logistics</p>
+          <h1 className="page-title">Dashboard</h1>
+          <p className="page-subtitle">Operations overview — scans, packing plans, fleet capacity</p>
         </div>
-        <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
-          <div style={{ position: "relative" }}>
-            <Search size={16} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "var(--text-secondary)" }} />
-            <input 
-              type="text" 
-              placeholder="Search ID, Container..." 
-              style={{ paddingLeft: "36px", width: "240px", height: "36px", borderRadius: "18px" }} 
-            />
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <div className="range-strip">
+            {RANGES.map((r) => (
+              <button
+                key={r.days}
+                className={`range-chip ${rangeDays === r.days ? "active" : ""}`}
+                onClick={() => setRangeDays(r.days)}
+              >
+                {r.label}
+              </button>
+            ))}
           </div>
-          <button className="btn-icon btn-secondary" style={{ borderRadius: "50%", width: "36px", height: "36px" }}>
-            <Bell size={16} />
+          <button className="btn-secondary btn-icon" onClick={load} title="Refresh">
+            <RefreshCw size={14} className={refreshing ? "spin" : ""} />
           </button>
-          <button className="btn-primary">
-            <Plus size={16} /> New Shipment
-          </button>
+          <Link to="/camera"><button className="btn-cta"><ScanLine size={15} /> Scan a Box</button></Link>
         </div>
       </div>
 
-      <div className="grid grid-4" style={{ marginBottom: "24px" }}>
-        <div className="card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
-            <div>
-              <h3>Boxes Scanned</h3>
-              <p className="stat-value mono-num">{stats.total_boxes}</p>
-            </div>
-            <div style={{ padding: "8px", background: "rgba(11, 197, 234, 0.1)", color: "var(--accent-cyan)", borderRadius: "8px" }}>
-              <Package size={20} />
-            </div>
-          </div>
-          <Sparkline data={[12, 14, 18, 15, 22, 28, 25, 30]} color="var(--accent-cyan)" />
-          <div style={{ marginTop: "12px", fontSize: "11px", color: "var(--success)", display: "flex", alignItems: "center", gap: "4px" }}>
-            <TrendingUp size={12} /> +14.2% vs last week
-          </div>
-        </div>
-        
-        <div className="card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
-            <div>
-              <h3>Active Fleet</h3>
-              <p className="stat-value mono-num">{stats.total_containers}</p>
-            </div>
-            <div style={{ padding: "8px", background: "rgba(124, 58, 237, 0.1)", color: "var(--accent-blue)", borderRadius: "8px" }}>
-              <Truck size={20} />
-            </div>
-          </div>
-          <Sparkline data={[5, 5, 6, 8, 8, 10, 10, 12]} color="var(--accent-blue)" />
-          <div style={{ marginTop: "12px", fontSize: "11px", color: "var(--success)", display: "flex", alignItems: "center", gap: "4px" }}>
-            <TrendingUp size={12} /> +2 added today
-          </div>
-        </div>
-
-        <div className="card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
-            <div>
-              <h3>Net Savings</h3>
-              <p className="stat-value mono-num">$24,500</p>
-            </div>
-            <div style={{ padding: "8px", background: "rgba(76, 175, 80, 0.1)", color: "var(--success)", borderRadius: "8px" }}>
-              <DollarSign size={20} />
-            </div>
-          </div>
-          <Sparkline data={[400, 600, 500, 900, 1200, 1100, 1500, 2400]} color="var(--success)" />
-          <div style={{ marginTop: "12px", fontSize: "11px", color: "var(--success)", display: "flex", alignItems: "center", gap: "4px" }}>
-            <TrendingUp size={12} /> Optimization effect
-          </div>
-        </div>
-
-        <div className="card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
-            <div>
-              <h3>Avg Utilization</h3>
-              <p className="stat-value mono-num">{stats.avg_utilization_percent}%</p>
-            </div>
-            <div style={{ padding: "8px", background: "rgba(255, 135, 9, 0.1)", color: "var(--accent-orange)", borderRadius: "8px" }}>
-              <Activity size={20} />
-            </div>
-          </div>
-          <Sparkline data={[75, 78, 80, 85, 82, 88, 92, 94]} color="var(--accent-orange)" />
-          <div style={{ marginTop: "12px", fontSize: "11px", color: "var(--success)", display: "flex", alignItems: "center", gap: "4px" }}>
-            <TrendingUp size={12} /> approaching 95% target
-          </div>
-        </div>
+      <div className="grid grid-4" style={{ marginBottom: 16 }}>
+        <KpiCard
+          title="Boxes Scanned"
+          value={stats.total_boxes}
+          format={fmtInt}
+          icon={Package}
+          tint="var(--data-blue)"
+          spark={derived.boxSeries}
+          delta={derived.boxDelta}
+          footer={`${derived.pendingCount} pending in queue`}
+        />
+        <KpiCard
+          title="Active Fleet"
+          value={derived.active}
+          format={fmtInt}
+          icon={Truck}
+          tint="var(--accent)"
+          spark={derived.planSeries}
+          delta={derived.planDelta}
+          footer={`${stats.total_containers} vehicles registered`}
+        />
+        <KpiCard
+          title="Avg Plan Utilization"
+          value={stats.avg_utilization_percent}
+          format={(v) => `${v.toFixed(1)}%`}
+          icon={Gauge}
+          tint="var(--data-amber)"
+          footer="volume-based packing"
+        />
+        <KpiCard
+          title="Scheduled Shipments"
+          value={stats.total_shipments}
+          format={fmtInt}
+          icon={CalendarClock}
+          tint="var(--data-violet)"
+          footer="from inventory schedule"
+        />
       </div>
 
-      <div className="grid grid-3" style={{ marginBottom: "24px" }}>
-        <div className="card" style={{ gridColumn: "span 2" }}>
-          <h3>Financial & Operations Summary</h3>
-          <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "20px" }}>Projected End of Year expenses vs load efficiency</p>
-          
-          <div style={{ display: "flex", gap: "24px", alignItems: "center" }}>
-            <div style={{ flex: 1 }}>
-              {/* Mock Expenses Breakdown */}
-              <div style={{ marginBottom: "16px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", marginBottom: "6px" }}>
-                  <span style={{ color: "var(--text-secondary)" }}>Fuel Costs</span>
-                  <span className="mono-num">$45,200</span>
-                </div>
-                <div style={{ width: "100%", height: "4px", background: "var(--bg-surface)", borderRadius: "2px" }}>
-                  <div style={{ width: "65%", height: "100%", background: "var(--danger)", borderRadius: "2px" }} />
-                </div>
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, marginBottom: 16, alignItems: "start" }}>
+        <div className="card flush" data-animate="rise">
+          <div className="card-header">
+            <h3><Activity size={13} /> Fleet Capacity</h3>
+            <div className="spacer" />
+            <span className="mono-num" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              {derived.fleetUsedM3.toFixed(2)} / {derived.fleetMaxM3.toFixed(2)} m³
+            </span>
+          </div>
+          <div className="card-body">
+            <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
+              Volume in use across the active fleet — the scheduler fills partially loaded vehicles first
+            </p>
+            <div style={{ display: "flex", gap: 28, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 260 }}>
+                {containers.filter((c) => c.status !== "shipped").map((c) => {
+                  const used = Number(c.used_volume_cm3);
+                  const max = Number(c.max_volume_cm3) || 1;
+                  const pct = Math.min((used / max) * 100, 100);
+                  return (
+                    <div key={c.id} style={{ marginBottom: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 5 }}>
+                        <span style={{ color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
+                          <span className="status-dot" style={{ background: STATUS_COLORS[c.status] || "var(--text-muted)" }} />
+                          <span className="mono-num">{c.code}</span> {c.name}
+                        </span>
+                        <span className="mono-num" style={{ color: "var(--text-muted)" }}>
+                          {(used / 1_000_000).toFixed(2)} m³ · {pct.toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className="capacity-bar">
+                        <div className="seg" style={{ width: `${pct}%`, background: pct > 90 ? "var(--success)" : "var(--accent)" }} />
+                      </div>
+                    </div>
+                  );
+                })}
+                {containers.length === 0 && <div className="empty-state">No vehicles yet</div>}
               </div>
-              <div style={{ marginBottom: "16px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", marginBottom: "6px" }}>
-                  <span style={{ color: "var(--text-secondary)" }}>Maintenance</span>
-                  <span className="mono-num">$12,450</span>
-                </div>
-                <div style={{ width: "100%", height: "4px", background: "var(--bg-surface)", borderRadius: "2px" }}>
-                  <div style={{ width: "25%", height: "100%", background: "var(--warning)", borderRadius: "2px" }} />
-                </div>
-              </div>
-              <div style={{ marginBottom: "16px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", marginBottom: "6px" }}>
-                  <span style={{ color: "var(--text-secondary)" }}>Driver Salaries</span>
-                  <span className="mono-num">$82,000</span>
-                </div>
-                <div style={{ width: "100%", height: "4px", background: "var(--bg-surface)", borderRadius: "2px" }}>
-                  <div style={{ width: "85%", height: "100%", background: "var(--accent-blue)", borderRadius: "2px" }} />
-                </div>
+              <div style={{ display: "flex", gap: 20 }}>
+                <DonutChart percentage={derived.fleetPct} color="var(--accent)" label="Fleet volume" />
+                <DonutChart percentage={stats.avg_utilization_percent} color="var(--data-blue)" label="Avg per plan" />
               </div>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-              <DonutChart percentage={87} color="var(--accent-blue)" label="Efficiency" />
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-              <DonutChart percentage={42} color="var(--success)" label="Savings Rate" />
+            <div className="divider" />
+            <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+              {Object.entries(STATUS_COLORS).map(([status, color]) => (
+                <span key={status} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-secondary)" }}>
+                  <span className="status-dot" style={{ background: color }} />
+                  <span style={{ textTransform: "capitalize" }}>{status}</span>
+                  <b className="mono-num">{derived.statusCounts[status] || 0}</b>
+                </span>
+              ))}
+              <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-muted)" }}>
+                Scanned cargo total: <b className="mono-num">{(derived.scannedVolume / 1_000_000).toFixed(2)} m³</b>
+              </span>
             </div>
           </div>
         </div>
 
-        <div className="card">
-          <h3>Utilization Impact</h3>
-          <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "20px" }}>AI Optimization Metrics</p>
-          
-          <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "20px", padding: "16px", background: "var(--bg-surface)", borderRadius: "12px" }}>
-            <div style={{ width: "48px", height: "48px", borderRadius: "50%", background: "var(--success)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}>
-              <Truck size={24} />
-            </div>
-            <div>
-              <div style={{ fontSize: "24px", fontWeight: "700" }} className="mono-num">12</div>
-              <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Fewer Trucks Needed</div>
-            </div>
+        <div className="card flush" data-animate="rise">
+          <div className="card-header">
+            <h3><Activity size={13} /> Live Activity</h3>
+            <div className="spacer" />
+            <span className="pulse-dot" />
           </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: "16px", padding: "16px", background: "var(--bg-surface)", borderRadius: "12px" }}>
-            <div style={{ width: "48px", height: "48px", borderRadius: "50%", background: "var(--accent-cyan)", display: "flex", alignItems: "center", justifyContent: "center", color: "#000" }}>
-              <Box size={24} />
-            </div>
-            <div>
-              <div style={{ fontSize: "24px", fontWeight: "700" }} className="mono-num">4,200</div>
-              <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Extra Boxes Packed</div>
-            </div>
+          <div className="feed">
+            {activityFeed.map((e, i) => (
+              <div key={i} className="feed-item">
+                <div className="feed-ico" style={{ background: `color-mix(in srgb, ${e.tint} 12%, transparent)`, color: e.tint }}>
+                  <e.icon size={13} />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div className="feed-title">{e.title}</div>
+                  <div className="feed-sub">{e.sub}</div>
+                </div>
+                <span className="feed-time">{relTime(e.at)}</span>
+              </div>
+            ))}
+            {activityFeed.length === 0 && <div className="empty-state">No activity yet — scan your first box</div>}
           </div>
         </div>
       </div>
 
-      <div className="card">
-        <h3>Active Fleet & Load Status</h3>
-        <div className="table-wrap" style={{ marginTop: 16 }}>
+      <div className="grid grid-2" style={{ marginBottom: 16 }}>
+        <div className="card flush" data-animate="rise">
+          <div className="card-header">
+            <h3><Truck size={13} /> Fleet & Load Status</h3>
+            <div className="spacer" />
+            <Link to="/inventory" style={{ fontSize: 12, color: "var(--accent)", textDecoration: "none", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+              Manage <ArrowUpRight size={12} />
+            </Link>
+          </div>
           <table>
             <thead>
               <tr>
-                <th>Container ID</th>
-                <th>Vehicle Type</th>
-                <th>Dimensions (cm)</th>
+                <th>Vehicle</th>
                 <th>Volume Cap.</th>
-                <th>Load Utilization</th>
+                <th>Load</th>
                 <th>Status</th>
-                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {containers.map(c => {
-                const util = c.max_volume_cm3 > 0 ? (c.used_volume_cm3 / c.max_volume_cm3 * 100) : 0;
+              {containers.map((c) => {
+                const util = c.max_volume_cm3 > 0 ? (c.used_volume_cm3 / c.max_volume_cm3) * 100 : 0;
                 return (
                   <tr key={c.id}>
-                    <td><span className="mono-num" style={{ fontWeight: 600 }}>{c.code}</span></td>
-                    <td style={{ color: "var(--text-secondary)" }}>{c.name}</td>
-                    <td className="mono-num">{c.length_cm} × {c.width_cm} × {c.height_cm}</td>
-                    <td className="mono-num">{(c.max_volume_cm3 / 1000000).toFixed(2)} m³</td>
                     <td>
+                      <div className="mono-num" style={{ fontWeight: 600, fontSize: 12 }}>{c.code}</div>
+                      <div style={{ color: "var(--text-muted)", fontSize: 11 }}>{c.name}</div>
+                    </td>
+                    <td className="mono-num">{(c.max_volume_cm3 / 1_000_000).toFixed(2)} m³</td>
+                    <td style={{ minWidth: 130 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ width: "100px", height: "4px", background: "var(--bg-surface)", borderRadius: "2px", overflow: "hidden" }}>
-                          <div style={{ width: `${Math.min(util, 100)}%`, height: "100%", background: util > 90 ? "var(--success)" : "var(--accent-blue)", borderRadius: "2px" }} />
+                        <div className="progress-track">
+                          <div className="progress-fill" style={{ width: `${Math.min(util, 100)}%`, background: util > 90 ? "var(--success)" : "var(--accent)" }} />
                         </div>
-                        <span className="mono-num" style={{ fontSize: "12px" }}>{Math.round(util)}%</span>
+                        <span className="mono-num" style={{ fontSize: 11 }}>{Math.round(util)}%</span>
                       </div>
                     </td>
-                    <td><span className={`badge ${c.status === "full" ? "success" : "warning"}`}>{c.status}</span></td>
-                    <td>
-                      <button className="btn-secondary" style={{ padding: "4px 8px", fontSize: "11px" }}>
-                        View Plan <ArrowUpRight size={12} />
-                      </button>
-                    </td>
+                    <td><span className={`badge ${c.status}`}>{c.status}</span></td>
                   </tr>
                 );
               })}
+              {containers.length === 0 && (
+                <tr><td colSpan={4} className="empty-state">No vehicles yet — add one in Inventory</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="card flush" data-animate="rise">
+          <div className="card-header">
+            <h3><Package size={13} /> Recent Packing Plans</h3>
+            <div className="spacer" />
+            <Link to="/visualizer" style={{ fontSize: 12, color: "var(--accent)", textDecoration: "none", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+              Simulator <ArrowUpRight size={12} />
+            </Link>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Vehicle</th>
+                <th>Boxes</th>
+                <th>Utilization</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentPlans.map((p) => (
+                <tr key={p.id}>
+                  <td className="mono-num" style={{ fontWeight: 600, fontSize: 12 }}>{containerCode[p.container_id] || "—"}</td>
+                  <td className="mono-num">{p.box_count}</td>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div className="progress-track">
+                        <div className="progress-fill" style={{ width: `${Math.min(p.volume_utilization * 100, 100)}%`, background: "var(--data-blue)" }} />
+                      </div>
+                      <span className="mono-num" style={{ fontSize: 11 }}>{(p.volume_utilization * 100).toFixed(1)}%</span>
+                    </div>
+                  </td>
+                  <td style={{ color: "var(--text-muted)", fontSize: 12 }}>{relTime(p.created_at)}</td>
+                </tr>
+              ))}
+              {recentPlans.length === 0 && (
+                <tr><td colSpan={4} className="empty-state">No plans yet — scan boxes and run the AI packer</td></tr>
+              )}
             </tbody>
           </table>
         </div>

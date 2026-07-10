@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==================================================
+   Brand identity tokens — the single source of truth
+   consumed by tailwind.config.js. Swap the exact brand
+   values here; every `brand-*` utility follows.
+   RGB triplets (not hex) so Tailwind alpha works:
+   e.g. bg-brand-ink/60.
+   ================================================== */
+:root {
+  --brand-primary: 132 204 22;      /* lime  #84cc16 */
+  --brand-primary-deep: 77 124 15;  /* lime-deep #4d7c0f */
+  --brand-accent: 139 92 246;       /* purple #8b5cf6 */
+  --brand-accent-deep: 107 56 212;  /* purple-deep #6b38d4 */
+  --brand-ink: 15 23 42;            /* slate-900 #0f172a */
+  --brand-ink-soft: 100 116 139;    /* slate-500 #64748b */
+  --brand-surface: 247 249 251;     /* slate-50 #f7f9fb */
+  --brand-line: 226 232 240;        /* slate-200 #e2e8f0 */
+
+  --brand-font-head: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --brand-font-body: 'Hanken Grotesk', system-ui, sans-serif;
+  --brand-font-mono: 'Geist', 'JetBrains Mono', monospace;
+}

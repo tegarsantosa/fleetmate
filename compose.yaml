@@ -77,6 +77,7 @@ services:
       VITE_PACKING_BASE_URL: http://localhost:8002
     volumes:
       - ./app/src:/app/src
+      - ./app/public/models:/app/public/models
       - ./media:/app/public/media
     ports:
       - "5173:5173"

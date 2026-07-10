@@ -1,106 +1,184 @@
-import React, { useEffect, useState, useMemo, useCallback } from "react";
+import React, { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { Link } from "react-router-dom";
 import Container3D from "../components/Container3D.jsx";
 import { api, packing } from "../lib/api.js";
-import { Camera, Zap, RefreshCw, Truck, Box, Cpu } from "lucide-react";
+import { useToast } from "../components/Toast.jsx";
+import {
+  Camera, Zap, RefreshCw, Truck, Box, Cpu, ListOrdered, Send, RotateCcw, Sparkles, Scan,
+} from "lucide-react";
+
+// Mirrors the packing service's select_best_container(): a vehicle is eligible
+// while it is available/loading and still fits the smallest pending box; the
+// scheduler prefers the most-loaded vehicle that still fits (bin-packing
+// best-fit, same idea as a k8s scheduler bin-packing pods onto nodes).
+function rankVehicles(containers, pendingBoxes) {
+  const smallest = pendingBoxes.length
+    ? Math.min(...pendingBoxes.map((b) => Number(b.length_cm) * Number(b.width_cm) * Number(b.height_cm)))
+    : 0;
+
+  const annotated = containers.map((c) => {
+    const free = Number(c.max_volume_cm3) - Number(c.used_volume_cm3);
+    const eligible =
+      (c.status === "available" || c.status === "loading") && free >= smallest && pendingBoxes.length > 0;
+    return { ...c, free, eligible, remainingRatio: c.max_volume_cm3 > 0 ? free / c.max_volume_cm3 : 0 };
+  });
+
+  const eligibleSorted = annotated
+    .filter((c) => c.eligible)
+    .sort((a, b) => a.remainingRatio - b.remainingRatio || a.max_volume_cm3 - b.max_volume_cm3);
+
+  return { annotated, recommendedId: eligibleSorted[0]?.id ?? null };
+}
 
 export default function Visualizer() {
+  const toast = useToast();
   const [containers, setContainers] = useState([]);
   const [plans, setPlans] = useState([]);
+  const [allBoxes, setAllBoxes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
-  const [pendingBoxes, setPendingBoxes] = useState([]);
   const [error, setError] = useState(null);
   const [animKey, setAnimKey] = useState(0);
   const [dispatching, setDispatching] = useState(false);
   const [dispatchAnimId, setDispatchAnimId] = useState(null);
   const [isPacking, setIsPacking] = useState(false);
+  const [autoPack, setAutoPack] = useState(false);
+  const [viewPreset, setViewPreset] = useState(null);
+  const [presetKey, setPresetKey] = useState(0);
+  const [xray, setXray] = useState(true);
+  const [landedCount, setLandedCount] = useState(0);
+  const packingRef = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
-      const [containerList, planList, pendingBoxesData] = await Promise.all([
+      const [containerList, planList, boxList] = await Promise.all([
         api.listContainers(),
         api.listPlans(),
-        api.listBoxes("pending"),
+        api.listBoxes(),
       ]);
-      const available = containerList.filter(c => c.status !== "shipped");
+      const available = containerList.filter((c) => c.status !== "shipped");
       setContainers(available);
       setPlans(planList);
-      
-      // Sort pending boxes by created_at ascending (FIFO)
-      const sortedBoxes = pendingBoxesData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-      setPendingBoxes(sortedBoxes);
-      
+      setAllBoxes(boxList);
+      setError(null);
+
       setSelectedId((prev) => {
         if (prev == null && available.length > 0) return available[0].id;
-        if (available.find(c => c.id === prev)) return prev;
+        if (available.find((c) => c.id === prev)) return prev;
         return available.length > 0 ? available[0].id : null;
       });
-      return sortedBoxes.length;
     } catch (err) {
       setError(err.message);
-      return 0;
     }
   }, []);
 
-  // Poll only for boxes count and status updates
   useEffect(() => {
-    let cancelled = false;
-
-    const poll = async () => {
-      if (cancelled) return;
-      await refresh();
-    };
-
-    poll();
-    const interval = setInterval(poll, 2500);
-    return () => { cancelled = true; clearInterval(interval); };
+    refresh();
+    const interval = setInterval(refresh, 2500);
+    return () => clearInterval(interval);
   }, [refresh]);
 
-  const handleManualPack = async () => {
+  // reset step tracker whenever the animation replays or the vehicle changes
+  useEffect(() => {
+    setLandedCount(0);
+  }, [animKey, selectedId]);
+
+  const pendingBoxes = useMemo(
+    () =>
+      allBoxes
+        .filter((b) => b.status === "pending")
+        .sort((a, b) => new Date(a.created_at) - new Date(b.created_at)),
+    [allBoxes]
+  );
+
+  const boxLabelById = useMemo(() => {
+    const map = {};
+    for (const b of allBoxes) map[b.id] = b.label;
+    return map;
+  }, [allBoxes]);
+
+  const { annotated: rankedContainers, recommendedId } = useMemo(
+    () => rankVehicles(containers, pendingBoxes),
+    [containers, pendingBoxes]
+  );
+
+  const runPack = useCallback(async () => {
+    if (packingRef.current) return;
+    packingRef.current = true;
     setIsPacking(true);
     try {
-      await packing.run();
+      const result = await packing.run();
       await refresh();
-      setAnimKey(k => k + 1); // re-trigger drops
+      setAnimKey((k) => k + 1);
+      const placed = result.plans.reduce((s, p) => s + p.box_count, 0);
+      const vehicles = new Set(result.plans.map((p) => p.container_id)).size;
+      if (placed > 0) {
+        toast(`AI packed ${placed} box${placed > 1 ? "es" : ""} into ${vehicles} vehicle${vehicles > 1 ? "s" : ""}`, "success");
+        if (result.plans.length > 0) setSelectedId(result.plans[0].container_id);
+      }
+      if (result.unplaced_boxes.length > 0) {
+        toast(`${result.unplaced_boxes.length} box(es) did not fit any vehicle`, "error");
+      }
     } catch (err) {
       setError(err.message);
+      toast("Packing failed", "error");
     } finally {
+      packingRef.current = false;
       setIsPacking(false);
     }
-  };
+  }, [refresh, toast]);
+
+  // Auto-pack: when enabled, newly scanned boxes are packed as they arrive.
+  useEffect(() => {
+    if (autoPack && pendingBoxes.length > 0 && !packingRef.current && !dispatching) {
+      runPack();
+    }
+  }, [autoPack, pendingBoxes.length, dispatching, runPack]);
 
   const handlePickBestVehicle = () => {
-    const eligible = containers.filter(c => c.status !== 'shipped' && c.status !== 'full');
-    if (eligible.length > 0) {
-      eligible.sort((a, b) => (b.max_volume_cm3 - b.used_volume_cm3) - (a.max_volume_cm3 - a.used_volume_cm3));
-      setSelectedId(eligible[0].id);
+    if (recommendedId) {
+      setSelectedId(recommendedId);
+      setAnimKey((k) => k + 1);
+      const rec = rankedContainers.find((c) => c.id === recommendedId);
+      toast(`Best fit: ${rec.name} — ${Math.round((1 - rec.remainingRatio) * 100)}% loaded, fills up first`, "info");
+    } else {
+      toast("No eligible vehicle for the current queue", "error");
     }
   };
 
   const handleResetContainer = async (id) => {
-    await api.resetContainer(id);
-    await refresh();
-    setAnimKey((k) => k + 1);
+    try {
+      await api.resetContainer(id);
+      await refresh();
+      setAnimKey((k) => k + 1);
+      toast("Vehicle emptied — boxes returned to queue", "info");
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
-  const handleDispatch = async (id) => {
+  const handleDispatch = (id) => {
     setDispatching(true);
     setDispatchAnimId(id);
-    setTimeout(async () => {
-      try {
-        await api.dispatchContainer(id);
-        await refresh();
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setDispatching(false);
-        setDispatchAnimId(null);
-        setAnimKey((k) => k + 1);
-      }
-    }, 3500);
   };
+
+  const finishDispatch = useCallback(async () => {
+    try {
+      await api.dispatchContainer(dispatchAnimId);
+      await refresh();
+      toast("Shipment dispatched", "success");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDispatching(false);
+      setDispatchAnimId(null);
+      setAnimKey((k) => k + 1);
+    }
+  }, [dispatchAnimId, refresh, toast]);
 
   const selectedContainer = containers.find((c) => c.id === selectedId) || null;
 
+  // Flatten plan items chronologically; within a plan, floor-level boxes drop
+  // first so stacks build bottom-up in the animation.
   const itemsForSelected = useMemo(() => {
     const containerPlans = plans
       .filter((p) => p.container_id === selectedId)
@@ -108,191 +186,292 @@ export default function Visualizer() {
 
     let idx = 0;
     return containerPlans.flatMap((p) =>
-      p.items.map(item => ({ ...item, colorIndex: idx++ }))
+      [...p.items]
+        .sort((a, b) => Number(a.pos_z) - Number(b.pos_z))
+        .map((item) => ({ ...item, colorIndex: idx++, boxLabel: boxLabelById[item.box_id] }))
     );
-  }, [plans, selectedId]);
+  }, [plans, selectedId, boxLabelById]);
 
-  const containerPlans = plans.filter((p) => p.container_id === selectedId);
-  const totalBoxesLoaded = containerPlans.reduce((sum, p) => sum + p.box_count, 0);
-  const currentUtilization = selectedContainer && selectedContainer.max_volume_cm3 > 0
-    ? (selectedContainer.used_volume_cm3 / selectedContainer.max_volume_cm3)
-    : 0;
+  const totalBoxesLoaded = itemsForSelected.length;
+  const currentUtilization =
+    selectedContainer && selectedContainer.max_volume_cm3 > 0
+      ? selectedContainer.used_volume_cm3 / selectedContainer.max_volume_cm3
+      : 0;
+  const isDispatchingSelected = dispatchAnimId === selectedId;
 
-  const isDispatching = dispatchAnimId === selectedId;
+  const setPreset = (p) => {
+    setViewPreset(p);
+    setPresetKey((k) => k + 1);
+  };
+
+  const onBoxLanded = useCallback((seq) => {
+    setLandedCount((c) => Math.max(c, seq + 1));
+  }, []);
 
   return (
     <div>
       <div className="page-header">
         <div>
-          <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <h1 className="page-title">
             Load Simulator
-            <span style={{ fontSize: 10, padding: "4px 8px", background: "var(--accent-blue)", color: "#fff", borderRadius: 12, display: "flex", alignItems: "center", gap: 4 }}>
-              <Cpu size={12} /> AI Powered
-            </span>
+            <span className="ai-badge"><Cpu size={11} /> AI Powered</span>
           </h1>
-          <p className="page-subtitle">Digital-twin 3D bin packing engine</p>
+          <p className="page-subtitle">Digital-twin bin packing — volume-based, scheduler fills loaded vehicles first</p>
         </div>
-        <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-          <button className="btn-primary" style={{ background: "var(--accent-blue)" }} onClick={() => window.location.href = '/camera'}>
-            <Camera size={16} /> Open Camera Scan
-          </button>
-        </div>
+        <Link to="/camera">
+          <button className="btn-secondary"><Camera size={15} /> Open Scan Station</button>
+        </Link>
       </div>
 
-      {error && (
-        <div style={{ background: "var(--danger)", color: "#fff", padding: "10px 16px", borderRadius: 8, marginBottom: 16, fontSize: 13 }}>
-          {error}
-        </div>
-      )}
+      {error && <div className="alert error">{error}</div>}
 
-      <div style={{ display: "grid", gridTemplateColumns: "380px 1fr", gap: 24, alignItems: "start" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          
-          <div className="card" style={{ background: "linear-gradient(135deg, var(--bg-surface) 0%, rgba(138, 129, 255, 0.05) 100%)", border: "1px solid var(--accent-blue)" }}>
-            <h3 style={{ color: "var(--accent-blue)", display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <Zap size={16} /> Pending Boxes Queue
-            </h3>
-            
-            <div style={{ 
-              maxHeight: 180, 
-              overflowY: "auto", 
-              background: "var(--bg-primary)", 
-              borderRadius: 8,
-              border: "1px solid var(--border-color)",
-              marginBottom: 16
-            }}>
-              {pendingBoxes.length > 0 ? pendingBoxes.map((box, i) => (
-                <div key={box.id} style={{ 
-                  padding: "8px 12px", 
-                  borderBottom: "1px solid var(--border-color)", 
-                  display: "flex", 
-                  justifyContent: "space-between",
-                  alignItems: "center"
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{ width: 24, height: 24, borderRadius: 12, background: "var(--bg-surface)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600 }}>
-                      {i + 1}
-                    </div>
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>{box.label || `Box ${box.id.substring(0,6)}`}</span>
-                  </div>
-                  <div className="mono-num" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                    {box.length_cm} &times; {box.width_cm} &times; {box.height_cm} cm
-                  </div>
-                </div>
-              )) : (
-                <div style={{ padding: 24, textAlign: "center", color: "var(--text-secondary)", fontSize: 13 }}>
-                  No boxes waiting to be packed
-                </div>
-              )}
+      <div style={{ display: "grid", gridTemplateColumns: "370px 1fr", gap: 16, alignItems: "start" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+          {/* ---- Scheduler / queue ---- */}
+          <div className="card flush">
+            <div className="card-header">
+              <h3><Zap size={13} /> Packing Queue</h3>
+              <div className="spacer" />
+              {pendingBoxes.length > 0 && <span className="pulse-dot" />}
+              <span className="mono-num" style={{ fontSize: 11, color: "var(--text-muted)" }}>{pendingBoxes.length}</span>
             </div>
-
-            <div style={{ display: "flex", gap: 8 }}>
-              <button 
-                className="btn-primary" 
-                style={{ flex: 1, background: "var(--accent-blue)" }}
-                onClick={handleManualPack}
-                disabled={pendingBoxes.length === 0 || isPacking}
-              >
-                {isPacking ? <RefreshCw size={16} className="spin" /> : <Box size={16} />}
-                Pack Collected Boxes
-              </button>
-              <button 
-                className="btn-secondary" 
-                style={{ padding: "8px 12px" }}
-                onClick={handlePickBestVehicle}
-                title="Pick Best Fit Vehicle"
-              >
-                <Truck size={16} />
-              </button>
-            </div>
-          </div>
-
-          <div className="card">
-            <h3>Vehicle Picker</h3>
-            <div className="container-list" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }}>
-              {containers.map((c) => {
-                const utilization = c.max_volume_cm3 > 0 ? c.used_volume_cm3 / c.max_volume_cm3 : 0;
-                return (
-                  <div
-                    key={c.id}
-                    className={`container-row ${c.id === selectedId ? "selected" : ""}`}
-                    onClick={() => { setSelectedId(c.id); setAnimKey((k) => k + 1); }}
-                    style={{ padding: 12, border: "1px solid var(--border-color)", borderRadius: 12, cursor: "pointer", display: "flex", flexDirection: "column", gap: 8 }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{c.name}</div>
-                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: c.status === "full" ? "var(--danger)" : "var(--success)" }} title={c.status} />
+            <div className="card-body" style={{ paddingTop: 12 }}>
+              <div style={{
+                maxHeight: 160, overflowY: "auto",
+                borderRadius: 6, border: "1px solid var(--border-color)", marginBottom: 12,
+              }}>
+                {pendingBoxes.length > 0 ? pendingBoxes.map((box, i) => (
+                  <div key={box.id} className="queue-row">
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <span className="queue-index">{i + 1}</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {box.label || `Box ${box.id.substring(0, 6)}`}
+                      </span>
                     </div>
-                    <div className="mono-num" style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-                      {c.length_cm} &times; {c.width_cm} &times; {c.height_cm} cm
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ height: 4, background: "var(--bg-primary)", flex: 1, borderRadius: 2, overflow: "hidden" }}>
-                        <div style={{ width: `${Math.min(utilization * 100, 100)}%`, height: "100%", background: utilization > 0.9 ? "var(--success)" : "var(--accent-blue)" }} />
-                      </div>
-                      <span className="mono-num" style={{ fontSize: 10 }}>{Math.round(utilization * 100)}%</span>
-                    </div>
+                    <span className="mono-num" style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>
+                      {Number(box.length_cm)}×{Number(box.width_cm)}×{Number(box.height_cm)}
+                    </span>
                   </div>
-                );
-              })}
-              {containers.length === 0 && (
-                <p style={{ color: "var(--text-secondary)", fontSize: 13, padding: 12, gridColumn: "1 / -1" }}>No available vehicles</p>
-              )}
-            </div>
-          </div>
-
-          {selectedContainer && (
-            <div className="card">
-              <h3>Load Plan Details</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12, marginBottom: 20 }}>
-                <div style={{ padding: 12, background: "var(--bg-surface)", borderRadius: 8 }}>
-                  <div style={{ fontSize: 11, color: "var(--text-secondary)", textTransform: "uppercase" }}>Boxes Loaded</div>
-                  <div className="mono-num" style={{ fontSize: 24, fontWeight: 700 }}>{totalBoxesLoaded}</div>
-                </div>
-                <div style={{ padding: 12, background: "var(--bg-surface)", borderRadius: 8 }}>
-                  <div style={{ fontSize: 11, color: "var(--text-secondary)", textTransform: "uppercase" }}>Space Used</div>
-                  <div className="mono-num" style={{ fontSize: 24, fontWeight: 700, color: currentUtilization > 0.9 ? "var(--success)" : "inherit" }}>
-                    {(currentUtilization * 100).toFixed(1)}%
+                )) : (
+                  <div className="empty-state" style={{ padding: 18 }}>
+                    Queue is empty — scan a box to feed the packer
                   </div>
-                </div>
+                )}
               </div>
 
-              <div style={{ display: "flex", gap: 10 }}>
-                {totalBoxesLoaded > 0 && (
-                  <button
-                    className="btn-success"
-                    style={{ flex: 1 }}
-                    onClick={() => handleDispatch(selectedContainer.id)}
-                    disabled={dispatching}
-                  >
-                    {isDispatching ? "Releasing..." : "Release Shipment"}
-                  </button>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <button
+                  className="btn-cta"
+                  style={{ flex: 1 }}
+                  onClick={runPack}
+                  disabled={pendingBoxes.length === 0 || isPacking}
+                >
+                  {isPacking ? <RefreshCw size={15} className="spin" /> : <Box size={15} />}
+                  AI Auto-Pack
+                </button>
+                <button
+                  className="btn-secondary"
+                  onClick={handlePickBestVehicle}
+                  title="Recommend the best-fit vehicle for the queue"
+                >
+                  <Sparkles size={15} />
+                </button>
+              </div>
+
+              <label style={{
+                display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+                textTransform: "none", letterSpacing: 0, fontSize: 12, fontWeight: 500, margin: 0,
+                color: "var(--text-secondary)",
+              }}>
+                <input
+                  type="checkbox"
+                  checked={autoPack}
+                  onChange={(e) => setAutoPack(e.target.checked)}
+                  style={{ width: "auto" }}
+                />
+                Auto-pack as boxes arrive
+              </label>
+            </div>
+          </div>
+
+          {/* ---- Fleet nodes ---- */}
+          <div className="card flush">
+            <div className="card-header">
+              <h3><Truck size={13} /> Fleet Scheduler</h3>
+              <div className="spacer" />
+              <span style={{ fontSize: 10, color: "var(--text-muted)" }}>best-fit · volume-based</span>
+            </div>
+            <div className="card-body" style={{ paddingTop: 12 }}>
+              <p style={{ fontSize: 11, color: "var(--text-muted)", margin: "0 0 12px" }}>
+                Like a k8s scheduler: partially loaded vehicles fill first; full ones are skipped automatically
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                {rankedContainers.map((c) => {
+                  const utilization = 1 - c.remainingRatio;
+                  return (
+                    <div
+                      key={c.id}
+                      className={[
+                        "node-card",
+                        c.id === selectedId ? "selected" : "",
+                        c.id === recommendedId ? "recommended" : "",
+                        !c.eligible && pendingBoxes.length > 0 ? "ineligible" : "",
+                      ].join(" ")}
+                      onClick={() => { setSelectedId(c.id); setAnimKey((k) => k + 1); }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+                        <div style={{ fontWeight: 700, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
+                        <span
+                          className="status-dot"
+                          title={c.status}
+                          style={{ background: c.status === "full" ? "var(--danger)" : c.status === "loading" ? "var(--warning)" : "var(--success)" }}
+                        />
+                      </div>
+                      <div className="mono-num" style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                        {Number(c.length_cm)}×{Number(c.width_cm)}×{Number(c.height_cm)} cm
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div className="progress-track">
+                          <div
+                            className="progress-fill"
+                            style={{ width: `${Math.min(utilization * 100, 100)}%`, background: utilization > 0.9 ? "var(--success)" : "var(--accent)" }}
+                          />
+                        </div>
+                        <span className="mono-num" style={{ fontSize: 10 }}>{Math.round(utilization * 100)}%</span>
+                      </div>
+                    </div>
+                  );
+                })}
+                {rankedContainers.length === 0 && (
+                  <p className="empty-state" style={{ gridColumn: "1 / -1", padding: 12 }}>No available vehicles — add one in Inventory</p>
                 )}
+              </div>
+            </div>
+          </div>
+
+          {/* ---- Selected vehicle ---- */}
+          {selectedContainer && (
+            <div className="card flush">
+              <div className="card-header">
+                <h3><ListOrdered size={13} /> {selectedContainer.code} — Load Plan</h3>
+              </div>
+              <div className="card-body" style={{ paddingTop: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                  <div style={{ padding: 12, background: "var(--bg-surface)", borderRadius: 6 }}>
+                    <div className="label-caps">Boxes Loaded</div>
+                    <div className="mono-num" style={{ fontSize: 22, fontWeight: 700 }}>{totalBoxesLoaded}</div>
+                  </div>
+                  <div style={{ padding: 12, background: "var(--bg-surface)", borderRadius: 6 }}>
+                    <div className="label-caps">Volume Used</div>
+                    <div className="mono-num" style={{ fontSize: 22, fontWeight: 700, color: currentUtilization > 0.9 ? "var(--success-ink)" : "inherit" }}>
+                      {(currentUtilization * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                </div>
+
+                {itemsForSelected.length > 0 && (
+                  <details open={itemsForSelected.length <= 8} style={{ marginBottom: 12 }}>
+                    <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 600, color: "var(--text-secondary)" }}>
+                      Loading sequence — {Math.min(landedCount, itemsForSelected.length)}/{itemsForSelected.length} placed
+                    </summary>
+                    <div style={{
+                      maxHeight: 190, overflowY: "auto", marginTop: 8,
+                      borderRadius: 6, border: "1px solid var(--border-color)",
+                    }}>
+                      {itemsForSelected.map((item, i) => (
+                        <div
+                          key={item.id ?? i}
+                          className={`queue-row ${i < landedCount ? "done" : i === landedCount ? "active-step" : ""}`}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                            <span className="queue-index">{i + 1}</span>
+                            <span style={{ fontSize: 11, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {item.boxLabel || `Box ${String(item.box_id).substring(0, 6)}`}
+                            </span>
+                          </div>
+                          <span className="mono-num" style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>
+                            @ {Math.round(item.pos_x)},{Math.round(item.pos_y)},{Math.round(item.pos_z)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+
                 {totalBoxesLoaded > 0 && (
-                  <button
-                    className="btn-secondary"
-                    onClick={() => handleResetContainer(selectedContainer.id)}
-                    disabled={dispatching}
-                  >
-                    Reset
-                  </button>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      className="btn-cta"
+                      style={{ flex: 1 }}
+                      onClick={() => handleDispatch(selectedContainer.id)}
+                      disabled={dispatching}
+                    >
+                      <Send size={14} /> {isDispatchingSelected ? "Releasing..." : "Dispatch"}
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      onClick={() => handleResetContainer(selectedContainer.id)}
+                      disabled={dispatching}
+                      title="Empty this vehicle and return boxes to the queue"
+                    >
+                      <RotateCcw size={14} />
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
           )}
         </div>
 
-        <div className="card" style={{ padding: 0, overflow: "hidden", height: "100%" }}>
-          <Container3D key={animKey} container={selectedContainer} items={itemsForSelected} isDispatching={isDispatching} />
+        {/* ---- 3D viewer ---- */}
+        <div className="card flush" style={{ position: "sticky", top: 0 }}>
+          <div style={{ position: "relative", height: "calc(100vh - 150px)", minHeight: 560 }}>
+            {selectedContainer && (
+              <>
+                <div className="viewer-hud top-left">
+                  <span className="hud-chip mono-num">{selectedContainer.code}</span>
+                  <span className="hud-chip mono-num">{totalBoxesLoaded} boxes</span>
+                  <span className="hud-chip mono-num">{(currentUtilization * 100).toFixed(1)}% vol</span>
+                </div>
+                <div className="viewer-hud top-right">
+                  {["iso", "top", "side", "rear", "cab"].map((p) => (
+                    <button
+                      key={p}
+                      className={`hud-btn ${viewPreset === p ? "active" : ""}`}
+                      onClick={() => setPreset(p)}
+                    >
+                      {p.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+                <div className="viewer-hud bottom-right">
+                  <button className={`hud-btn ${xray ? "active" : ""}`} onClick={() => setXray((v) => !v)} title="See through the container walls">
+                    <Scan size={11} /> X-RAY
+                  </button>
+                  <button className="hud-btn" onClick={() => setAnimKey((k) => k + 1)} title="Replay the loading animation">
+                    <RefreshCw size={11} /> REPLAY
+                  </button>
+                </div>
+                <div className="viewer-hud bottom-left">
+                  <span className="hud-chip">Drag to orbit · Scroll to zoom · Hover a box</span>
+                </div>
+              </>
+            )}
+            <Container3D
+              key={`${animKey}-${selectedId}`}
+              container={selectedContainer}
+              items={itemsForSelected}
+              isDispatching={isDispatchingSelected}
+              onDispatchDone={finishDispatch}
+              viewPreset={viewPreset}
+              presetKey={presetKey}
+              xray={xray}
+              onBoxLanded={onBoxLanded}
+            />
+          </div>
         </div>
       </div>
-      
-      <style>{`
-        .spin { animation: spin 1s linear infinite; }
-        @keyframes spin { 100% { transform: rotate(360deg); } }
-        .container-row:hover { border-color: var(--accent-blue); background: var(--bg-surface); }
-        .container-row.selected { border-color: var(--accent-blue); background: var(--bg-surface); box-shadow: 0 0 0 1px var(--accent-blue); }
-      `}</style>
     </div>
   );
 }

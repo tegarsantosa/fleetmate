@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "../lib/api.js";
+import { useToast } from "../components/Toast.jsx";
+import { Truck, PackageCheck, Loader, PackageX } from "lucide-react";
 
 function ContainerModal({ container, onClose, onSaved }) {
   const isEdit = !!container;
@@ -154,7 +156,15 @@ function ShipmentModal({ shipment, containers, onClose, onSaved }) {
   );
 }
 
+const KPI_DEFS = [
+  { key: "total", label: "Total Fleet", icon: Truck, color: "var(--accent-blue)" },
+  { key: "available", label: "Available", icon: PackageCheck, color: "var(--success)" },
+  { key: "loading", label: "Loading", icon: Loader, color: "var(--warning)" },
+  { key: "full", label: "Full", icon: PackageX, color: "var(--danger)" },
+];
+
 export default function Inventory() {
+  const toast = useToast();
   const [containers, setContainers] = useState([]);
   const [shipments, setShipments] = useState([]);
   const [containerModal, setContainerModal] = useState(null);
@@ -170,16 +180,33 @@ export default function Inventory() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  const kpis = useMemo(() => ({
+    total: containers.length,
+    available: containers.filter((c) => c.status === "available").length,
+    loading: containers.filter((c) => c.status === "loading").length,
+    full: containers.filter((c) => c.status === "full").length,
+  }), [containers]);
+
   const handleDeleteContainer = async (id) => {
     if (!confirm("Delete this container?")) return;
-    await api.deleteContainer(id);
-    refresh();
+    try {
+      await api.deleteContainer(id);
+      toast("Container deleted", "info");
+      refresh();
+    } catch (err) {
+      toast(err.message, "error");
+    }
   };
 
   const handleDeleteShipment = async (id) => {
     if (!confirm("Delete this shipment?")) return;
-    await api.deleteShipment(id);
-    refresh();
+    try {
+      await api.deleteShipment(id);
+      toast("Shipment deleted", "info");
+      refresh();
+    } catch (err) {
+      toast(err.message, "error");
+    }
   };
 
   return (
@@ -191,10 +218,24 @@ export default function Inventory() {
         </div>
       </div>
 
+      <div className="grid grid-4" style={{ marginBottom: 24 }}>
+        {KPI_DEFS.map(({ key, label, icon: Icon, color }) => (
+          <div key={key} className="card" style={{ padding: 18, display: "flex", alignItems: "center", gap: 14 }}>
+            <div className="stat-icon" style={{ background: `color-mix(in srgb, ${color} 12%, transparent)`, color }}>
+              <Icon size={18} />
+            </div>
+            <div>
+              <div className="mono-num" style={{ fontSize: 22, fontWeight: 700 }}>{kpis[key]}</div>
+              <div style={{ fontSize: 11, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
       <div style={{ marginBottom: 28 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 700 }}>Fleet Containers</h2>
-          <button className="btn-primary" onClick={() => { setContainerModal(null); setShowContainerForm(true); }}>+ Add Container</button>
+          <h2 className="section-title">Fleet Containers</h2>
+          <button className="btn-cta" onClick={() => { setContainerModal(null); setShowContainerForm(true); }}>+ Add Container</button>
         </div>
         <div className="table-wrap">
           <table>
@@ -204,17 +245,28 @@ export default function Inventory() {
                 <th>Name</th>
                 <th>L × W × H (cm)</th>
                 <th>Max Volume</th>
+                <th>Load</th>
                 <th>Status</th>
                 <th style={{ textAlign: "right" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {containers.map(c => (
+              {containers.map(c => {
+                const util = c.max_volume_cm3 > 0 ? (Number(c.used_volume_cm3) / Number(c.max_volume_cm3)) * 100 : 0;
+                return (
                 <tr key={c.id}>
                   <td><span className="mono">{c.code}</span></td>
                   <td style={{ fontWeight: 600 }}>{c.name}</td>
-                  <td>{c.length_cm} × {c.width_cm} × {c.height_cm}</td>
-                  <td>{(c.max_volume_cm3 / 1000000).toFixed(2)} m³</td>
+                  <td className="mono-num">{Number(c.length_cm)} × {Number(c.width_cm)} × {Number(c.height_cm)}</td>
+                  <td className="mono-num">{(c.max_volume_cm3 / 1000000).toFixed(2)} m³</td>
+                  <td style={{ minWidth: 120 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div className="progress-track">
+                        <div className="progress-fill" style={{ width: `${Math.min(util, 100)}%`, background: util > 90 ? "var(--success)" : "var(--accent-blue)" }} />
+                      </div>
+                      <span className="mono-num" style={{ fontSize: 11 }}>{Math.round(util)}%</span>
+                    </div>
+                  </td>
                   <td><span className={`badge ${c.status}`}>{c.status}</span></td>
                   <td>
                     <div className="actions-cell">
@@ -223,7 +275,11 @@ export default function Inventory() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
+              {containers.length === 0 && (
+                <tr><td colSpan={7} className="empty-state">No vehicles yet — add your first container</td></tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -231,8 +287,8 @@ export default function Inventory() {
 
       <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 700 }}>Scheduled Shipments</h2>
-          <button className="btn-primary" onClick={() => { setShipmentModal(null); setShowShipmentForm(true); }}>+ Schedule Shipment</button>
+          <h2 className="section-title">Scheduled Shipments</h2>
+          <button className="btn-cta" onClick={() => { setShipmentModal(null); setShowShipmentForm(true); }}>+ Schedule Shipment</button>
         </div>
         <div className="table-wrap">
           <table>

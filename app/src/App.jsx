@@ -1,94 +1,159 @@
-import React, { useEffect, useState } from "react";
-import { NavLink, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import React, { useEffect, useState, lazy, Suspense } from "react";
+import { NavLink, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import CameraController from "./pages/CameraController.jsx";
 import Visualizer from "./pages/Visualizer.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Inventory from "./pages/Inventory.jsx";
 import Account from "./pages/Account.jsx";
 import ApiKeys from "./pages/ApiKeys.jsx";
-import Login from "./pages/Login.jsx";
-import { Moon, Sun } from "lucide-react";
+import { ToastProvider } from "./components/Toast.jsx";
+import TopBar from "./components/TopBar.jsx";
+import { api } from "./lib/api.js";
+import {
+  Moon, Sun, LayoutDashboard, Boxes, ScanLine, Container as ContainerIcon,
+  KeyRound, UserRound, Box, LogOut,
+} from "lucide-react";
+
+// The landing carries its own fonts/CSS — split it so the console stays lean.
+const Landing = lazy(() => import("./pages/Landing.jsx"));
+
+const NAV = [
+  { section: "Overview" },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/inventory", label: "Inventory", icon: Boxes },
+  { section: "Operations" },
+  { to: "/camera", label: "AI Scan Station", icon: ScanLine },
+  { to: "/visualizer", label: "Load Simulator", icon: ContainerIcon },
+  { section: "Settings" },
+  { to: "/api-keys", label: "API Keys", icon: KeyRound },
+  { to: "/account", label: "Account", icon: UserRound },
+];
+
+const BRAND_LOGO = "/logo.png";
+
+function SidebarUser({ theme, onToggleTheme }) {
+  const [user, setUser] = useState(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    api.getMe().then(setUser).catch(() => {});
+  }, []);
+
+  const logout = () => {
+    localStorage.removeItem("fleetmate_logged_in");
+    navigate("/login");
+  };
+
+  return (
+    <div className="sidebar-user">
+      <div className="avatar">{(user?.username || "F").charAt(0).toUpperCase()}</div>
+      <div style={{ minWidth: 0 }}>
+        <div className="u-name">{user?.username || "Operator"}</div>
+        <div className="u-mail">{user?.email || "fleet console"}</div>
+      </div>
+      <button
+        className="theme-btn"
+        onClick={onToggleTheme}
+        title={theme === "light" ? "Switch to night shift" : "Switch to day shift"}
+      >
+        {theme === "light" ? <Moon size={14} /> : <Sun size={14} />}
+      </button>
+      <button className="theme-btn" style={{ marginLeft: 6 }} onClick={logout} title="Sign out to the landing page">
+        <LogOut size={14} />
+      </button>
+    </div>
+  );
+}
 
 export default function App() {
   const location = useLocation();
   const isLogin = location.pathname === "/login";
-  
-  const [theme, setTheme] = useState("dark");
-  
+  const [logoOk, setLogoOk] = useState(true);
+
+  // Industrial Precision is light-first; the old dark default is retired.
+  const [theme, setTheme] = useState(() => localStorage.getItem("fleetmate_theme_v2") || "light");
+
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("fleetmate_theme_v2", theme);
   }, [theme]);
 
-  const toggleTheme = () => {
-    setTheme(prev => prev === "dark" ? "light" : "dark");
-  };
+  const toggleTheme = () => setTheme((prev) => (prev === "light" ? "dark" : "light"));
 
   if (isLogin) {
     return (
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
+      <ToastProvider>
+        <Suspense fallback={null}>
+          <Routes>
+            <Route path="/login" element={<Landing />} />
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          </Routes>
+        </Suspense>
+      </ToastProvider>
     );
   }
 
   return (
-    <div className="app-shell">
-      <div className="sidebar">
-        <div className="nav-brand">
-          <div style={{ width: 24, height: 24, background: "var(--accent-blue)", borderRadius: 6 }}></div>
-          FleetMate
-        </div>
-        
-        <div className="nav-section">Overview</div>
-        <NavLink to="/dashboard" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
-          Dashboard
-        </NavLink>
-        <NavLink to="/inventory" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
-          Inventory
-        </NavLink>
-        
-        <div className="nav-section">Operations</div>
-        <NavLink to="/camera" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
-          Camera Scanner
-        </NavLink>
-        <NavLink to="/visualizer" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
-          Load Simulator
-        </NavLink>
-        
-        <div style={{ flex: 1 }} />
-        
-        <div style={{ padding: "0 20px 20px" }}>
-          <button 
-            onClick={toggleTheme} 
-            className="btn-secondary" 
-            style={{ width: "100%", justifyContent: "center" }}
-          >
-            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-            {theme === "dark" ? "Light Mode" : "Dark Mode"}
-          </button>
+    <ToastProvider>
+      <div className="app-shell">
+        <div className="sidebar">
+          <div className="nav-brand">
+            {logoOk ? (
+              <img src={BRAND_LOGO} alt="FleetMate" onError={() => setLogoOk(false)} />
+            ) : (
+              <div className="brand-mark"><Box size={16} /></div>
+            )}
+            <div>
+              FleetMate
+              <span className="brand-sub">Fleet Space Console</span>
+            </div>
+          </div>
+
+          {NAV.map((item, i) =>
+            item.section ? (
+              <div key={`s-${i}`} className="nav-section">{item.section}</div>
+            ) : (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}
+              >
+                <item.icon size={15} />
+                {item.label}
+              </NavLink>
+            )
+          )}
+
+          <div style={{ flex: 1 }} />
+          <SidebarUser theme={theme} onToggleTheme={toggleTheme} />
         </div>
 
-        <div className="nav-section">Settings</div>
-        <NavLink to="/api-keys" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
-          API Keys
-        </NavLink>
-        <NavLink to="/account" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
-          Account
-        </NavLink>
+        <div className="main-col">
+          <TopBar />
+          <div className="page">
+            {/* key remounts the wrapper per route for the enter transition */}
+            <div key={location.pathname} className="page-enter">
+              <Routes location={location}>
+                <Route
+                  path="/"
+                  element={
+                    <Navigate
+                      to={localStorage.getItem("fleetmate_logged_in") ? "/dashboard" : "/login"}
+                      replace
+                    />
+                  }
+                />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/inventory" element={<Inventory />} />
+                <Route path="/camera" element={<CameraController />} />
+                <Route path="/visualizer" element={<Visualizer />} />
+                <Route path="/api-keys" element={<ApiKeys />} />
+                <Route path="/account" element={<Account />} />
+              </Routes>
+            </div>
+          </div>
+        </div>
       </div>
-      
-      <div className="page">
-        <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/inventory" element={<Inventory />} />
-          <Route path="/camera" element={<CameraController />} />
-          <Route path="/visualizer" element={<Visualizer />} />
-          <Route path="/api-keys" element={<ApiKeys />} />
-          <Route path="/account" element={<Account />} />
-        </Routes>
-      </div>
-    </div>
+    </ToastProvider>
   );
 }
