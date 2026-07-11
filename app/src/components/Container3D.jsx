@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState, useEffect, Suspense } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Edges, ContactShadows, Html, RoundedBox, useGLTF } from "@react-three/drei";
 import * as THREE from "three";
+import { cardboardMaterials } from "./cardboard.js";
 
 const PALETTE = [
   "#3e6ba8", "#0d9488", "#b47818", "#a84a3e", "#6d5aa8", "#3e8aa8", "#7a8f3d", "#a8653e",
@@ -284,8 +285,9 @@ function Truck({ length, width, height, doorsOpen, spinRef, xray, cabAvailable, 
         <meshStandardMaterial color="#3d4658" roughness={0.85} />
       </mesh>
 
-      {/* teal base rail */}
-      <mesh position={[L / 2, FLOOR_Y + 0.06, W / 2]}>
+      {/* teal base rail — top sits FLUSH with the container floor so cargo
+          never looks sunken into it (it used to poke 12cm above the floor) */}
+      <mesh position={[L / 2, FLOOR_Y - 0.06, W / 2]}>
         <boxGeometry args={[L + 0.04, 0.12, W + 0.08]} />
         <meshStandardMaterial color="#0d9488" metalness={0.4} roughness={0.4} />
       </mesh>
@@ -408,6 +410,10 @@ function AnimatedBox({ item, index, sequence, onLand }) {
   if (phase === "waiting") return null;
 
   const color = colorForBox(item.colorIndex ?? index);
+  // Kraft cardboard with sequence-colored packing tape. Materials are
+  // shared/cached module-wide, so hover feedback uses an overlay mesh
+  // instead of mutating material emissive (which would light EVERY box).
+  const materials = cardboardMaterials(color, item.colorIndex ?? index);
 
   return (
     <mesh
@@ -420,14 +426,16 @@ function AnimatedBox({ item, index, sequence, onLand }) {
       onPointerOut={() => { setHovered(false); document.body.style.cursor = "auto"; }}
     >
       <boxGeometry args={[length, height, width]} />
-      <meshStandardMaterial
-        color={color}
-        metalness={0.05}
-        roughness={0.6}
-        emissive={hovered ? color : "#000000"}
-        emissiveIntensity={hovered ? 0.3 : 0}
-      />
-      <Edges color={hovered ? "#ffffff" : "rgba(255,255,255,0.16)"} />
+      {materials.map((m, i) => (
+        <primitive key={i} object={m} attach={`material-${i}`} dispose={null} />
+      ))}
+      <Edges color={hovered ? "#ffffff" : "rgba(70,45,15,0.35)"} />
+      {hovered && (
+        <mesh scale={1.015}>
+          <boxGeometry args={[length, height, width]} />
+          <meshBasicMaterial color={color} transparent opacity={0.18} depthWrite={false} />
+        </mesh>
+      )}
       {hovered && (
         <Html center distanceFactor={7} style={{ pointerEvents: "none" }}>
           <div style={{
@@ -562,6 +570,7 @@ function DispatchRig({ container, items, cabAvailable, onFinished }) {
           const pl = Number(item.placed_length_cm) / 100;
           const pw = Number(item.placed_width_cm) / 100;
           const ph = Number(item.placed_height_cm) / 100;
+          const mats = cardboardMaterials(colorForBox(item.colorIndex ?? idx), item.colorIndex ?? idx);
           return (
             <mesh
               key={item.id || idx}
@@ -573,8 +582,10 @@ function DispatchRig({ container, items, cabAvailable, onFinished }) {
               castShadow
             >
               <boxGeometry args={[pl, ph, pw]} />
-              <meshStandardMaterial color={colorForBox(item.colorIndex ?? idx)} metalness={0.05} roughness={0.6} />
-              <Edges color="rgba(255,255,255,0.14)" />
+              {mats.map((m, i) => (
+                <primitive key={i} object={m} attach={`material-${i}`} dispose={null} />
+              ))}
+              <Edges color="rgba(70,45,15,0.3)" />
             </mesh>
           );
         })}
@@ -657,7 +668,7 @@ export default function Container3D({
     );
   }
 
-  if (dispatchDone) {
+  if (dispatchDone || (container && container.status === "shipped")) {
     return (
       <div className="viewer-wrap" style={{ display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
         <span style={{ fontSize: 40 }}>🚛</span>

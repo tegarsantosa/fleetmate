@@ -103,3 +103,24 @@ async def dispatch_container(container_id: uuid.UUID, session: AsyncSession = De
     await session.commit()
     await session.refresh(container)
     return container
+
+
+@router.post("/{container_id}/recall", response_model=ContainerOut)
+async def recall_container(container_id: uuid.UUID, session: AsyncSession = Depends(get_session)):
+    """Undo a dispatch: bring the shipped vehicle back to the dock with its
+    load plan intact, so it can be edited, unpacked, or re-dispatched."""
+    container = await session.get(Container, container_id)
+    if not container:
+        raise HTTPException(status_code=404, detail="container not found")
+    if container.status != "shipped":
+        raise HTTPException(status_code=409, detail="container is not shipped")
+
+    utilization = float(container.used_volume_cm3) / float(container.max_volume_cm3)
+    container.status = (
+        "available" if container.used_volume_cm3 <= 0
+        else "full" if utilization >= 0.97
+        else "loading"
+    )
+    await session.commit()
+    await session.refresh(container)
+    return container

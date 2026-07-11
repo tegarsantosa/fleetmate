@@ -81,50 +81,52 @@
 
 /* Slate Dark — same industrial language, night shift */
 [data-theme="dark"] {
-  --bg-primary: #0b1220;
-  --bg-secondary: #0e1729;
-  --bg-card: #111a2e;
-  --bg-card-hover: #16203a;
-  --bg-surface: #1a2438;
-  --bg-input: #0e1729;
+  /* Cinematic Smoke — pitch-black soot layers (ported from prior FleetMate) */
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #111111;
+  --bg-card: #141414;
+  --bg-card-hover: #1a1a1a;
+  --bg-surface: #1c1c1c;
+  --bg-input: #111111;
 
-  --accent: #14b8a6;
-  --accent-hover: #2dd4bf;
-  --accent-glow: rgba(20, 184, 166, 0.18);
-  --accent-soft: rgba(20, 184, 166, 0.14);
+  /* purple hero primary; cyan + orange as vibrant secondaries */
+  --accent: #8A81FF;
+  --accent-hover: #9D95FF;
+  --accent-glow: rgba(138, 129, 255, 0.18);
+  --accent-soft: rgba(138, 129, 255, 0.14);
 
-  --data-blue: #7da7dd;
-  --data-amber: #d9a441;
-  --data-violet: #a495d9;
+  --data-blue: #0BC5EA;
+  --data-amber: #FF8709;
+  --data-violet: #8A81FF;
 
-  --success: #34d399;
-  --success-bg: rgba(52, 211, 153, 0.13);
-  --success-ink: #6ee7b7;
-  --warning: #fbbf24;
-  --warning-bg: rgba(251, 191, 36, 0.12);
-  --warning-ink: #fcd34d;
-  --danger: #f87171;
-  --danger-bg: rgba(248, 113, 113, 0.12);
+  --success: #4CAF50;
+  --success-bg: rgba(76, 175, 80, 0.13);
+  --success-ink: #86efac;
+  --warning: #FFC107;
+  --warning-bg: rgba(255, 193, 7, 0.12);
+  --warning-ink: #fde68a;
+  --danger: #F44336;
+  --danger-bg: rgba(244, 67, 54, 0.12);
   --danger-ink: #fca5a5;
-  --info: #38bdf8;
-  --info-bg: rgba(56, 189, 248, 0.12);
+  --info: #0BC5EA;
+  --info-bg: rgba(11, 197, 234, 0.12);
   --info-ink: #7dd3fc;
 
-  --text-primary: #e8edf6;
-  --text-secondary: #9aa5b5;
-  --text-muted: #64748b;
+  --text-primary: #ffffff;
+  --text-secondary: #a3a3a3;
+  --text-muted: #6b7280;
 
-  --border-color: #22304a;
-  --border-strong: #31415f;
+  --border-color: #262626;
+  --border-strong: #333333;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 8px -1px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 12px 28px -6px rgba(0, 0, 0, 0.45);
 
-  --sidebar-bg: #081120;
+  --sidebar-bg: #0d0d0d;
   --sidebar-border: rgba(255, 255, 255, 0.06);
-  --sidebar-text: #8fa0b5;
-  --sidebar-text-active: #f1f5f9;
+  --sidebar-text: #a3a3a3;
+  --sidebar-text-active: #ffffff;
   --sidebar-surface: rgba(255, 255, 255, 0.05);
 }
 
@@ -1112,6 +1114,22 @@ tbody tr:hover { background: var(--bg-surface); }
 .step.on .n { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 .step-line { width: 34px; height: 1px; background: var(--border-strong); margin: 0 10px; }
+
+/* ---- Scan Station: screen flash synced with the hardware capture ---- */
+.scan-flash {
+  position: fixed;
+  inset: 0;
+  background: #ffffff;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0;
+  animation: scan-flash-blink 420ms ease-out forwards;
+}
+@keyframes scan-flash-blink {
+  0% { opacity: 0; }
+  12% { opacity: 0.85; }
+  100% { opacity: 0; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

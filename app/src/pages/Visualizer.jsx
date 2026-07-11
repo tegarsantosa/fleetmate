@@ -4,7 +4,7 @@ import Container3D from "../components/Container3D.jsx";
 import { api, packing } from "../lib/api.js";
 import { useToast } from "../components/Toast.jsx";
 import {
-  Camera, Zap, RefreshCw, Truck, Box, Cpu, ListOrdered, Send, RotateCcw, Sparkles, Scan,
+  Camera, Zap, RefreshCw, Truck, Box, Cpu, ListOrdered, Send, RotateCcw, Sparkles, Scan, X, Undo2,
 } from "lucide-react";
 
 // Mirrors the packing service's select_best_container(): a vehicle is eligible
@@ -55,16 +55,20 @@ export default function Visualizer() {
         api.listPlans(),
         api.listBoxes(),
       ]);
-      const available = containerList.filter((c) => c.status !== "shipped");
-      setContainers(available);
+      // Shipped vehicles STAY visible so a dispatch can be recalled/edited —
+      // they simply rank last and are never eligible for new boxes.
+      const ordered = [...containerList].sort(
+        (a, b) => (a.status === "shipped") - (b.status === "shipped")
+      );
+      setContainers(ordered);
       setPlans(planList);
       setAllBoxes(boxList);
       setError(null);
 
       setSelectedId((prev) => {
-        if (prev == null && available.length > 0) return available[0].id;
-        if (available.find((c) => c.id === prev)) return prev;
-        return available.length > 0 ? available[0].id : null;
+        if (prev == null && ordered.length > 0) return ordered[0].id;
+        if (ordered.find((c) => c.id === prev)) return prev;
+        return ordered.length > 0 ? ordered[0].id : null;
       });
     } catch (err) {
       setError(err.message);
@@ -159,6 +163,31 @@ export default function Visualizer() {
   const handleDispatch = (id) => {
     setDispatching(true);
     setDispatchAnimId(id);
+  };
+
+  // Un-pack a single box: off the plan, back into the pending queue.
+  const handleRemoveItem = async (item) => {
+    try {
+      await api.removePlanItem(item.id);
+      await refresh();
+      toast(`${item.boxLabel || "Box"} returned to the queue`, "info");
+    } catch (err) {
+      setError(err.message);
+      toast("Could not remove the box", "error");
+    }
+  };
+
+  // Undo a dispatch: the truck comes back to the dock, load intact.
+  const handleRecall = async (id) => {
+    try {
+      await api.recallContainer(id);
+      await refresh();
+      setAnimKey((k) => k + 1);
+      toast("Shipment recalled — vehicle is back at the dock", "info");
+    } catch (err) {
+      setError(err.message);
+      toast("Recall failed", "error");
+    }
   };
 
   const finishDispatch = useCallback(async () => {
@@ -325,7 +354,13 @@ export default function Visualizer() {
                         <span
                           className="status-dot"
                           title={c.status}
-                          style={{ background: c.status === "full" ? "var(--danger)" : c.status === "loading" ? "var(--warning)" : "var(--success)" }}
+                          style={{
+                            background:
+                              c.status === "shipped" ? "var(--info)"
+                              : c.status === "full" ? "var(--danger)"
+                              : c.status === "loading" ? "var(--warning)"
+                              : "var(--success)",
+                          }}
                         />
                       </div>
                       <div className="mono-num" style={{ fontSize: 10, color: "var(--text-muted)" }}>
@@ -390,8 +425,26 @@ export default function Visualizer() {
                               {item.boxLabel || `Box ${String(item.box_id).substring(0, 6)}`}
                             </span>
                           </div>
-                          <span className="mono-num" style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>
-                            @ {Math.round(item.pos_x)},{Math.round(item.pos_y)},{Math.round(item.pos_z)}
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                            <span className="mono-num" style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                              @ {Math.round(item.pos_x)},{Math.round(item.pos_y)},{Math.round(item.pos_z)}
+                            </span>
+                            {selectedContainer.status !== "shipped" && !dispatching && (
+                              <button
+                                onClick={() => handleRemoveItem(item)}
+                                title="Remove from plan — box returns to the queue"
+                                style={{
+                                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                  width: 20, height: 20, padding: 0, borderRadius: 5,
+                                  background: "transparent", border: "1px solid var(--border-color)",
+                                  color: "var(--text-muted)", cursor: "pointer",
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.color = "var(--danger)"; e.currentTarget.style.borderColor = "var(--danger)"; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.borderColor = "var(--border-color)"; }}
+                              >
+                                <X size={11} />
+                              </button>
+                            )}
                           </span>
                         </div>
                       ))}
@@ -399,7 +452,25 @@ export default function Visualizer() {
                   </details>
                 )}
 
-                {totalBoxesLoaded > 0 && (
+                {selectedContainer.status === "shipped" ? (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      className="btn-cta"
+                      style={{ flex: 1 }}
+                      onClick={() => handleRecall(selectedContainer.id)}
+                      title="Bring the vehicle back to the dock with its load intact"
+                    >
+                      <Undo2 size={14} /> Recall Shipment
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      onClick={() => handleResetContainer(selectedContainer.id)}
+                      title="Cancel the shipment entirely — empty the vehicle, boxes return to the queue"
+                    >
+                      <RotateCcw size={14} />
+                    </button>
+                  </div>
+                ) : totalBoxesLoaded > 0 && (
                   <div style={{ display: "flex", gap: 8 }}>
                     <button
                       className="btn-cta"

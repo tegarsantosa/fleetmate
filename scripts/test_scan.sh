@@ -27,7 +27,7 @@ if [[ -n "$RIGHT_IMAGE" ]]; then
     echo "right image not found: $RIGHT_IMAGE"
     exit 1
   fi
-  CURL_ARGS+=(-F "camera_right=@${RIGHT_IMAGE};type=image/jpeg")
+  CURL_ARGS+=(-F "camera_side=@${RIGHT_IMAGE};type=image/jpeg")
 fi
 
 echo "uploading ${LEFT_IMAGE} ${RIGHT_IMAGE:+and ${RIGHT_IMAGE}} as label='${LABEL}'..."

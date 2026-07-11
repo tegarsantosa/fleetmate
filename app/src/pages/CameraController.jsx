@@ -2,20 +2,34 @@ import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { vision, api, API_BASE_URL } from "../lib/api.js";
 import { useToast } from "../components/Toast.jsx";
+import { beepSuccess, beepError, flashLedOn, flashLedOff, setWhiteBalance } from "../lib/scanFx.js";
 import {
-  Camera, Cpu, ScanLine, Ruler, ArrowRight, Plug, Unplug, RefreshCw, PencilRuler,
+  Camera, Cpu, ScanLine, Ruler, ArrowRight, Plug, Unplug, RefreshCw, PencilRuler, SunMedium,
 } from "lucide-react";
+
+const WB_MODES = [
+  { value: 0, label: "Auto" },
+  { value: 1, label: "Sunny" },
+  { value: 2, label: "Office (anti green-tint)" },
+  { value: 3, label: "Cloudy" },
+  { value: 4, label: "Home" },
+];
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const DEFAULT_TOP = "http://fleetmate-cam-C414.local";
 const DEFAULT_SIDE = "http://fleetmate-cam-0C1F.local";
 
-function captureFrame(imgEl, canvasEl) {
-  if (!imgEl || !canvasEl || !imgEl.complete) return null;
-  const ctx = canvasEl.getContext("2d");
-  canvasEl.width = imgEl.naturalWidth || 640;
-  canvasEl.height = imgEl.naturalHeight || 480;
-  ctx.drawImage(imgEl, 0, 0, canvasEl.width, canvasEl.height);
-  return new Promise((resolve) => canvasEl.toBlob(resolve, "image/jpeg", 0.92));
+async function captureDirect(rawUrl) {
+  const endpoint = captureEndpoint(rawUrl);
+  if (!endpoint) return null;
+  try {
+    const res = await fetch(`${endpoint}?_=${Date.now()}`);
+    if (!res.ok) return null;
+    return await res.blob();
+  } catch {
+    return null;
+  }
 }
 
 function mediaUrl(path) {
@@ -23,17 +37,117 @@ function mediaUrl(path) {
   return `${API_BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
 }
 
-function StreamCard({ title, url, imgRef, canvasRef }) {
+// Derive the ESP32 single-shot JPEG endpoint (http://<host>/capture, port 80)
+// from whatever the operator typed — a bare host (fleetmate-cam-XXXX.local),
+// an IP, or a legacy :81/stream URL. We poll /capture instead of :81/stream
+// because the stream endpoint serves only ONE client at a time (a second open
+// browser tab blocks it forever) and Safari can't cleanly abort it. /capture
+// has no such limit, sends CORS headers, and never hangs. Same approach as the
+// vanilla FleetMate app (public/js/camera-preview.js).
+function captureEndpoint(raw) {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw.includes("://") ? raw : `http://${raw}`);
+    return `${u.protocol}//${u.hostname}/capture`; // force port 80 + /capture
+  } catch {
+    return null;
+  }
+}
+
+// Profile pushed to every board on connect so both rigs always start at the
+// same WiFi-friendly settings regardless of what a prior stock-UI session left
+// them on. Stock CameraWebServer does NOT persist these across a reboot, so we
+// re-assert them each time we connect.  framesize 2 = QCIF 176x144.
+const CAMERA_DEFAULTS = { framesize: 2, quality: 4, xclkMhz: 15, special_effect: 0 };
+
+async function applyCameraDefaults(rawUrl) {
+  let host;
+  try {
+    const u = new URL(rawUrl.includes("://") ? rawUrl : `http://${rawUrl}`);
+    host = `${u.protocol}//${u.hostname}`;
+  } catch {
+    return;
+  }
+  // Fire-and-forget GET side-effects. mode:"no-cors" so they still reach the
+  // board even if it omits CORS headers on these endpoints (we never read the
+  // response). NOTE: xclk uses the dedicated /xclk endpoint — /control?var=xclk
+  // returns HTTP 500 on this firmware.
+  const hit = (path) => fetch(`${host}${path}`, { mode: "no-cors" }).catch(() => { });
+  await hit(`/xclk?xclk=${CAMERA_DEFAULTS.xclkMhz}`); // re-inits sensor clock first
+  await hit(`/control?var=framesize&val=${CAMERA_DEFAULTS.framesize}`);
+  await hit(`/control?var=quality&val=${CAMERA_DEFAULTS.quality}`);
+  await hit(`/control?var=special_effect&val=${CAMERA_DEFAULTS.special_effect}`); // 0 = No Effect (disables grayscale etc)
+  await hit(`/control?var=wb_mode&val=2`); // lock AWB to Office — kills fluorescent green-tint
+  await hit(`/control?var=led_intensity&val=0`); // safety: LED off while previewing
+}
+
+// Fake a live feed by repeatedly reloading /capture into the <img>: schedule the
+// next frame only after the current one settles (self-paced, never hammers the
+// board), with a per-frame watchdog so a stalled request can't freeze the feed.
+function useSnapshotStream(imgRef, rawUrl, isPaused, refreshKey) {
+  const [status, setStatus] = useState("connecting");
+  useEffect(() => {
+    if (isPaused) {
+      setStatus("paused");
+      return;
+    }
+    const endpoint = captureEndpoint(rawUrl);
+    const img = imgRef.current;
+    if (!endpoint || !img) { setStatus("retrying"); return; }
+
+    let stopped = false;
+    let everLoaded = false;
+    let timer = null;
+    let watchdog = null;
+
+    const poll = () => {
+      if (stopped) return;
+      let settled = false;
+      const started = Date.now();
+      const finish = (ok) => {
+        if (settled || stopped) return;
+        settled = true;
+        clearTimeout(watchdog);
+        if (ok) { everLoaded = true; setStatus("online"); }
+        else setStatus(everLoaded ? "online" : "retrying");
+        const wait = Math.max(800 - (Date.now() - started), 0);
+        timer = setTimeout(poll, wait);
+      };
+      img.onload = () => finish(true);
+      img.onerror = () => finish(false);
+      watchdog = setTimeout(() => finish(false), 4000);
+      img.src = `${endpoint}?_=${Date.now()}`; // cache-bust every frame
+    };
+
+    setStatus("connecting");
+    poll();
+
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      clearTimeout(watchdog);
+      img.onload = null;
+      img.onerror = null;
+    };
+  }, [imgRef, rawUrl, isPaused, refreshKey]);
+  return status;
+}
+
+function StreamCard({ title, url, imgRef, canvasRef, isPaused, refreshKey }) {
+  const status = useSnapshotStream(imgRef, url, isPaused, refreshKey);
+  const online = status === "online" || status === "paused";
+  const label = status === "paused" ? "PAUSED" : online ? "LIVE" : status === "connecting" ? "CONNECTING…" : "NO SIGNAL";
   return (
     <div className="card">
       <h3>
         <Camera size={13} /> {title}
-        <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10, color: "var(--success)" }}>
-          <span className="pulse-dot" /> LIVE
+        <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10, color: online ? "var(--success)" : "var(--text-secondary)" }}>
+          <span className="pulse-dot" /> {label}
         </span>
       </h3>
       <div style={{ marginTop: 12 }}>
-        <img ref={imgRef} src={url} alt={`${title} stream`} crossOrigin="anonymous" className="stream-frame" />
+        {/* src is driven imperatively by useSnapshotStream (polling /capture). */}
+        <img ref={imgRef} alt={`${title} stream`} crossOrigin="anonymous" className="stream-frame" />
         <canvas ref={canvasRef} style={{ display: "none" }} />
       </div>
     </div>
@@ -52,6 +166,9 @@ export default function CameraController() {
   const [recentBoxes, setRecentBoxes] = useState([]);
   const [manual, setManual] = useState({ length_cm: "", width_cm: "", height_cm: "" });
   const [savingManual, setSavingManual] = useState(false);
+  const [wbMode, setWbMode] = useState(2); // Office default (anti green-tint)
+  const [flashKey, setFlashKey] = useState(0); // remounts the screen-flash overlay
+  const [refreshKey, setRefreshKey] = useState(0); // soft-refreshes stream
 
   const topImgRef = useRef(null);
   const sideImgRef = useRef(null);
@@ -64,7 +181,7 @@ export default function CameraController() {
         const sorted = boxes.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
         setRecentBoxes(sorted.slice(0, 6));
       })
-      .catch(() => {});
+      .catch(() => { });
   };
 
   useEffect(refreshRecent, []);
@@ -72,21 +189,52 @@ export default function CameraController() {
   const handleScan = async () => {
     setScanning(true);
     setError(null);
+    const camUrls = [topUrl, sideUrl];
     try {
-      const topBlob = await captureFrame(topImgRef.current, topCanvasRef.current);
-      const sideBlob = await captureFrame(sideImgRef.current, sideCanvasRef.current);
-      if (!topBlob) throw new Error("Top camera frame not ready");
+      // Pause stream to free up ESP32
+      await sleep(500);
+
+      // 1. Hardware flash auto-pulse
+      await flashLedOn(camUrls, 180);
+      await sleep(300); // Wait for sensor exposure adjustment
+
+      // 2. Screen flash — visual confirmation the photo is being taken now.
+      setFlashKey((k) => k + 1);
+
+      const [topBlob, sideBlob] = await Promise.all([
+        captureDirect(topUrl),
+        captureDirect(sideUrl)
+      ]);
+
+      if (!topBlob) throw new Error("Top camera frame not ready or inaccessible");
       const result = await vision.scan(topBlob, sideBlob, label || undefined);
+
+      // 3. Barcode-gun double beep: measurement confirmed, no need to look.
+      beepSuccess();
       setLastResult(result);
       setLabel("");
       refreshRecent();
+      if (result.vision_meta?.simulation_mode) {
+        toast("Simulation Mode Active: Scaled 1cm = 10cm", "info");
+      }
       toast(`Measured ${result.box.length_cm} × ${result.box.width_cm} × ${result.box.height_cm} cm — queued for packing`, "success");
     } catch (err) {
+      beepError();
       setError(err.message);
       toast("Scan failed", "error");
     } finally {
+      // 4. ALWAYS kill the LED — a standing intensity would strobe with the
+      //    preview's /capture polling (stock firmware fires LED per capture).
+      flashLedOff(camUrls);
       setScanning(false);
+      setRefreshKey(k => k + 1);
     }
+  };
+
+  const handleWbChange = (mode) => {
+    setWbMode(mode);
+    setWhiteBalance([topUrl, sideUrl], mode);
+    toast(`White balance → ${WB_MODES.find((m) => m.value === mode)?.label}`, "success");
   };
 
   const handleManualAdd = async (e) => {
@@ -113,6 +261,8 @@ export default function CameraController() {
 
   return (
     <div>
+      {/* Screen-flash: white blink synced with the hardware shot (key remounts it) */}
+      {flashKey > 0 && <div key={flashKey} className="scan-flash" aria-hidden="true" />}
       <div className="page-header">
         <div>
           <h1 className="page-title">
@@ -158,7 +308,16 @@ export default function CameraController() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {!connected && (
-            <button className="btn-cta" onClick={() => { setError(null); setConnected(true); }}>
+            <button
+              className="btn-cta"
+              onClick={async () => {
+                setError(null);
+                setConnected(true);
+                // Push the shared profile to BOTH boards, then confirm.
+                await Promise.all([applyCameraDefaults(topUrl), applyCameraDefaults(sideUrl)]);
+                toast("Camera profile applied — QCIF 176×144 · Q4 · 15 MHz", "success");
+              }}
+            >
               <Plug size={15} /> Connect Cameras
             </button>
           )}
@@ -166,9 +325,24 @@ export default function CameraController() {
             <input placeholder="Box label (optional)" value={label} onChange={(e) => setLabel(e.target.value)} />
           </div>
           {connected && (
-            <span className="info-chip" style={{ flexShrink: 0 }}>
-              <span className="status-dot" style={{ background: "var(--success)" }} /> Connected
-            </span>
+            <>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)", flexShrink: 0 }}>
+                <SunMedium size={14} />
+                <select
+                  value={wbMode}
+                  onChange={(e) => handleWbChange(Number(e.target.value))}
+                  title="Remote white balance — both cameras"
+                  style={{ padding: "6px 8px", fontSize: 12 }}
+                >
+                  {WB_MODES.map((m) => (
+                    <option key={m.value} value={m.value}>WB: {m.label}</option>
+                  ))}
+                </select>
+              </label>
+              <span className="info-chip" style={{ flexShrink: 0 }}>
+                <span className="status-dot" style={{ background: "var(--success)" }} /> Connected
+              </span>
+            </>
           )}
         </div>
 
@@ -200,8 +374,8 @@ export default function CameraController() {
 
       {connected && (
         <div className="grid grid-2" style={{ marginBottom: 16 }}>
-          <StreamCard title="Top Camera" url={topUrl} imgRef={topImgRef} canvasRef={topCanvasRef} />
-          <StreamCard title="Side Camera" url={sideUrl} imgRef={sideImgRef} canvasRef={sideCanvasRef} />
+          <StreamCard title="Top Camera" url={topUrl} imgRef={topImgRef} canvasRef={topCanvasRef} isPaused={scanning} refreshKey={refreshKey} />
+          <StreamCard title="Side Camera" url={sideUrl} imgRef={sideImgRef} canvasRef={sideCanvasRef} isPaused={scanning} refreshKey={refreshKey} />
         </div>
       )}
 

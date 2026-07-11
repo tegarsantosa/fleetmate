@@ -25,6 +25,8 @@ export const api = {
   deleteContainer: (id) => request(`${API_BASE_URL}/containers/${id}`, { method: "DELETE" }),
   resetContainer: (id) => request(`${API_BASE_URL}/containers/${id}/reset`, { method: "POST" }),
   dispatchContainer: (id) => request(`${API_BASE_URL}/containers/${id}/dispatch`, { method: "POST" }),
+  recallContainer: (id) => request(`${API_BASE_URL}/containers/${id}/recall`, { method: "POST" }),
+  removePlanItem: (itemId) => request(`${API_BASE_URL}/packing-plans/items/${itemId}`, { method: "DELETE" }),
   listBoxes: (status) => request(`${API_BASE_URL}/boxes${status ? `?status=${status}` : ""}`),
   createBox: (data) => request(`${API_BASE_URL}/boxes`, { method: "POST", ...jsonBody(data) }),
   listPlans: () => request(`${API_BASE_URL}/packing-plans`),
