@@ -11,6 +11,9 @@ import {
 import { useToast } from "../components/Toast.jsx";
 import Scene from "../landing3d/Scene.jsx";
 import ScrollOverlay from "../landing3d/ScrollOverlay.jsx";
+import AutoPackPanel from "../landing3d/AutoPackPanel.jsx";
+import warehouseAisle from "../assets/parallax/warehouse-aisle.webp";
+import portAerial from "../assets/parallax/port-aerial-night.webp";
 import "./Landing.css";
 
 gsap.registerPlugin(ScrollTrigger, ScrollToPlugin);
@@ -98,6 +101,7 @@ export default function Landing() {
   const toast = useToast();
   const rootRef = useRef(null);
   const stepsLineRef = useRef(null);
+  const barRef = useRef(null); // top scroll-progress bar
   // scroll progress of the cinematic act, consumed by the 3D camera rig
   const progressRef = useRef({ p: 0 });
   const [navScrolled, setNavScrolled] = useState(false);
@@ -126,17 +130,32 @@ export default function Landing() {
     /* nav shadow — piggybacks on the same rAF-throttled scroll listener */
     let ticking = false;
     const pLayers = desktop && !reduced ? Array.from(root.querySelectorAll("[data-pspeed]")) : [];
+    const pBands = desktop && !reduced ? Array.from(root.querySelectorAll("[data-pband]")) : [];
     const onScroll = () => {
       if (ticking) return;
       ticking = true;
       requestAnimationFrame(() => {
         const y = window.scrollY;
+        const vh = window.innerHeight;
         setNavScrolled(y > 40);
         // nav shows light chrome while the dark cinematic act is on stage
         const act = document.getElementById("cine-act");
         setNavDark(act ? y < act.offsetTop + act.offsetHeight - 140 : false);
+        // top progress bar (transform only) — runs regardless of parallax gate
+        if (barRef.current) {
+          const max = document.documentElement.scrollHeight - window.innerHeight;
+          barRef.current.style.transform = `scaleX(${max > 0 ? y / max : 0})`;
+        }
         for (const el of pLayers) {
           el.style.transform = `translate3d(0, ${y * parseFloat(el.dataset.pspeed)}px, 0)`;
+        }
+        // parallax photo bands — drift BAND-RELATIVE (based on the band's own
+        // position in the viewport, not absolute scrollY) so the image stays
+        // roughly centred as the band passes through and never drifts off.
+        for (const img of pBands) {
+          const r = img.parentElement.getBoundingClientRect();
+          const prog = (r.top + r.height / 2 - vh / 2) / (vh / 2 + r.height / 2); // ~[-1,1]
+          img.style.transform = `translate3d(0, ${(prog * 9).toFixed(2)}%, 0)`;
         }
         ticking = false;
       });
@@ -170,8 +189,8 @@ export default function Landing() {
 
     if (reduced || hidden) {
       gsap.set(reveals, { opacity: 1, y: 0, clearProps: "transform" });
-      counters.forEach((el) => { el.textContent = el.dataset.count; });
-      bars.forEach((el) => { el.style.width = `${el.dataset.barw}%`; });
+      counters.forEach((el) => { el.textContent = `${el.dataset.prefix || ""}${el.dataset.count}${el.dataset.suffix || ""}`; });
+      bars.forEach((el) => { el.style.transform = `scaleX(${(+el.dataset.barw) / 100})`; });
       if (stepsLineRef.current) {
         const path = stepsLineRef.current.querySelector("path");
         if (path) path.style.strokeDashoffset = 0;
@@ -207,7 +226,7 @@ export default function Landing() {
       bars.forEach((el) => {
         ScrollTrigger.create({
           trigger: el, start: "top 90%", once: true,
-          onEnter: () => { el.style.width = `${el.dataset.barw}%`; },
+          onEnter: () => { el.style.transform = `scaleX(${(+el.dataset.barw) / 100})`; },
         });
       });
 
@@ -236,6 +255,69 @@ export default function Landing() {
     };
   }, []);
 
+  /* ---------- pointer micro-interactions: card tilt + magnetic buttons ---------- */
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || prefersReducedMotion()) return;
+    if (!window.matchMedia("(min-width: 769px)").matches || "ontouchstart" in window) return;
+
+    const cleanups = [];
+    const TILT_MAX = 5; // deg
+
+    root.querySelectorAll(".ld-tilt").forEach((el) => {
+      let raf = 0;
+      const onMove = (e) => {
+        const r = el.getBoundingClientRect();
+        const px = (e.clientX - r.left) / r.width - 0.5;
+        const py = (e.clientY - r.top) / r.height - 0.5;
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(() => {
+          el.style.setProperty("--rx", `${px * TILT_MAX}deg`);
+          el.style.setProperty("--ry", `${-py * TILT_MAX}deg`);
+        });
+      };
+      const onEnter = () => el.classList.add("is-tilting");
+      const onLeave = () => {
+        cancelAnimationFrame(raf);
+        el.classList.remove("is-tilting");
+        el.style.setProperty("--rx", "0deg");
+        el.style.setProperty("--ry", "0deg");
+      };
+      el.addEventListener("pointermove", onMove);
+      el.addEventListener("pointerenter", onEnter);
+      el.addEventListener("pointerleave", onLeave);
+      cleanups.push(() => {
+        cancelAnimationFrame(raf);
+        el.removeEventListener("pointermove", onMove);
+        el.removeEventListener("pointerenter", onEnter);
+        el.removeEventListener("pointerleave", onLeave);
+      });
+    });
+
+    root.querySelectorAll(".ld-magnetic").forEach((el) => {
+      const PULL = 0.28;
+      const onMove = (e) => {
+        const r = el.getBoundingClientRect();
+        const dx = e.clientX - (r.left + r.width / 2);
+        const dy = e.clientY - (r.top + r.height / 2);
+        el.classList.add("is-pulled");
+        el.style.transform = `translate3d(${dx * PULL}px, ${dy * PULL}px, 0)`;
+      };
+      const onLeave = () => {
+        el.classList.remove("is-pulled");
+        el.style.transform = "translate3d(0, 0, 0)";
+      };
+      el.addEventListener("pointermove", onMove);
+      el.addEventListener("pointerleave", onLeave);
+      cleanups.push(() => {
+        el.removeEventListener("pointermove", onMove);
+        el.removeEventListener("pointerleave", onLeave);
+      });
+    });
+
+    return () => cleanups.forEach((c) => c());
+  }, []);
+
   const handleLogin = (e) => {
     e.preventDefault();
     localStorage.setItem("fleetmate_logged_in", "1");
@@ -245,6 +327,9 @@ export default function Landing() {
 
   return (
     <div ref={rootRef} className={`ld-root ${prefersReducedMotion() ? "ld-no-motion" : ""}`}>
+
+      {/* top scroll-progress indicator */}
+      <div className="ld-progress" ref={barRef} aria-hidden="true" />
 
       {/* ================= NAV ================= */}
       <nav className={`ld-nav ${navScrolled ? "scrolled" : ""} ${navDark ? "dark" : ""}`}>
@@ -257,9 +342,10 @@ export default function Landing() {
             <button className="ld-nav-link" onClick={() => scrollTo("#why")}>Why</button>
             <button className="ld-nav-link" onClick={() => scrollTo("#how")}>How it works</button>
             <button className="ld-nav-link" onClick={() => scrollTo("#platform")}>Platform</button>
+            <button className="ld-nav-link" onClick={() => scrollTo("#autopack")}>Auto-Pack</button>
             <button className="ld-nav-link" onClick={() => scrollTo("#impact")}>Impact</button>
           </div>
-          <button className="ld-btn ld-btn-dark" style={{ padding: "9px 18px", marginLeft: 8 }} onClick={() => scrollTo("#login")}>
+          <button className="ld-btn ld-btn-dark ld-magnetic" style={{ padding: "9px 18px", marginLeft: 8 }} onClick={() => scrollTo("#login")}>
             Sign In
           </button>
         </div>
@@ -287,7 +373,10 @@ export default function Landing() {
 
       {/* ================= WHY ================= */}
       <section className="ld-section" id="why">
-        <div className="ld-container ld-why-grid">
+        <div className="ld-hero-layer" data-pspeed="0.05" aria-hidden="true">
+          <div className="ld-orb" style={{ top: "-4%", right: "2%", width: 460, height: 460, background: "#84cc16" }} />
+        </div>
+        <div className="ld-container ld-why-grid" style={{ position: "relative", zIndex: 1 }}>
           <div>
             <div className="ld-kicker" data-reveal>The problem</div>
             <h2 className="ld-h2" data-reveal>Trucks leave the dock half&nbsp;empty.</h2>
@@ -337,6 +426,23 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ========= PARALLAX BAND · warehouse reality ========= */}
+      <section className="ld-pband ld-pband-light">
+        <div className="ld-pband-img" data-pband style={{ backgroundImage: `url(${warehouseAisle})` }} />
+        <div className="ld-pband-scrim" />
+        <div className="ld-container ld-pband-content">
+          <div className="ld-kicker" data-reveal>On the ground</div>
+          <h2 className="ld-h2" style={{ maxWidth: 640 }} data-reveal>
+            Real warehouses.<br />Real trucks. Real boxes.
+          </h2>
+          <p className="ld-pband-sub" data-reveal>
+            FleetMate is built for the loading dock — not the whiteboard. Every
+            feature earns its place on the concrete floor, at 6&nbsp;a.m., with a
+            shipment already waiting.
+          </p>
+        </div>
+      </section>
+
       {/* ================= HOW ================= */}
       <section className="ld-section ld-blueprint" id="how" style={{ background: "#f2f4f6" }}>
         <div className="ld-container">
@@ -381,7 +487,7 @@ export default function Landing() {
 
           <div className="ld-platform-grid">
             {PLATFORM.map((p) => (
-              <div className="ld-glass" data-reveal key={p.title}>
+              <div className="ld-glass ld-tilt" data-reveal key={p.title}>
                 <div className="ic" style={{
                   width: 44, height: 44, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
                   background: "linear-gradient(45deg, rgba(132,204,22,0.14), rgba(139,92,246,0.14))", marginBottom: 14,
@@ -398,15 +504,36 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ================= AI AUTO-PACK (live demo) ================= */}
+      <section className="ld-section" id="autopack">
+        <div className="ld-container">
+          <div style={{ textAlign: "center", maxWidth: 640, margin: "0 auto 40px" }}>
+            <div className="ld-kicker" data-reveal style={{ justifyContent: "center" }}>Try it live</div>
+            <h2 className="ld-h2" data-reveal>From scan to loading manifest.</h2>
+            <p className="ld-body" data-reveal style={{ margin: "0 auto" }}>
+              Run the same deterministic bin-packing engine that powers the
+              console — then download a CSV your dock crew can load, box by box,
+              in the exact sequence.
+            </p>
+          </div>
+          <div data-reveal>
+            <AutoPackPanel />
+          </div>
+        </div>
+      </section>
+
       {/* ================= IMPACT ================= */}
       <section className="ld-section ld-blueprint" id="impact" style={{ background: "#f2f4f6" }}>
-        <div className="ld-container">
+        <div className="ld-hero-layer" data-pspeed="0.06" aria-hidden="true">
+          <div className="ld-orb" style={{ bottom: "-6%", left: "-2%", width: 480, height: 480, background: "#8b5cf6" }} />
+        </div>
+        <div className="ld-container" style={{ position: "relative", zIndex: 1 }}>
           <div className="ld-kicker" data-reveal>Why it matters</div>
           <h2 className="ld-h2" data-reveal>Built for the dock,<br />felt across the fleet.</h2>
 
           <div className="ld-impact-grid">
             {IMPACT.map((m) => (
-              <div className="ld-glass" data-reveal key={m.title}>
+              <div className="ld-glass ld-tilt" data-reveal key={m.title}>
                 <m.icon size={20} style={{ color: "var(--ld-purple-deep)", marginBottom: 12 }} />
                 <h4 style={{ fontFamily: "var(--ld-font-head)", fontSize: 16, fontWeight: 700, margin: "0 0 8px" }}>{m.title}</h4>
                 <p style={{ fontSize: 13.5, lineHeight: 1.55, color: "var(--ld-ink-2)", margin: "0 0 16px" }}>{m.body}</p>
@@ -430,6 +557,24 @@ export default function Landing() {
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ========= PARALLAX BAND · the scale (cinematic) ========= */}
+      <section className="ld-pband ld-pband-dark ld-pband-tall">
+        <div className="ld-pband-img" data-pband style={{ backgroundImage: `url(${portAerial})` }} />
+        <div className="ld-pband-scrim" />
+        <div className="ld-container ld-pband-content">
+          <div className="ld-kicker" data-reveal>The scale</div>
+          <h2 className="ld-h2" style={{ maxWidth: 660 }} data-reveal>Every container counts.</h2>
+          <p className="ld-pband-sub" data-reveal>
+            Millions of boxes move through ports and depots every day. Fit a few
+            more into every truck and the savings compound across the whole fleet.
+          </p>
+          <div className="ld-pband-badge" data-reveal>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#84cc16", display: "inline-block" }} />
+            One console · scan → pack → dispatch
           </div>
         </div>
       </section>
@@ -459,21 +604,21 @@ export default function Landing() {
 
               <div className="ld-login-stats" data-reveal>
                 <div className="ld-login-stat">
-                  <div className="v">128</div>
+                  <div className="v" data-count="128">0</div>
                   <div className="l">shipments / mo</div>
                 </div>
                 <div className="ld-login-stat purple">
-                  <div className="v">87.4%</div>
+                  <div className="v" data-count="87.4" data-decimals="1" data-suffix="%">0%</div>
                   <div className="l">fleet utilization</div>
                 </div>
                 <div className="ld-login-stat orange">
-                  <div className="v">Rp 128 jt</div>
+                  <div className="v" data-count="128" data-prefix="Rp " data-suffix=" jt">Rp 0 jt</div>
                   <div className="l">saved this quarter</div>
                 </div>
               </div>
             </div>
 
-            <form className="ld-login-card" data-reveal onSubmit={handleLogin}>
+            <form className="ld-login-card ld-tilt" data-reveal onSubmit={handleLogin}>
               <h2>Sign in</h2>
               <div className="sub">Use your operator credentials to continue.</div>
 
@@ -510,7 +655,7 @@ export default function Landing() {
                 </button>
               </div>
 
-              <button type="submit" className="ld-btn ld-btn-dark" style={{ width: "100%", height: 50, fontSize: 15 }}>
+              <button type="submit" className="ld-btn ld-btn-dark ld-magnetic" style={{ width: "100%", height: 50, fontSize: 15 }}>
                 Sign in to Console
               </button>
 

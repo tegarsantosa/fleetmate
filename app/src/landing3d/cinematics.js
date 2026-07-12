@@ -8,7 +8,7 @@
  *   - front grille faces -X, total length ≈ 9.2 m, cab roof ≈ y 3.1
  */
 
-export const CABIN_GREEN = "#84cc16"; // brand primary — applied to cab paint
+export const CABIN_GREEN = "#84D12A"; // vivid lime — applied ONLY to the cab paint
 
 export function clamp01(v) {
   return Math.min(1, Math.max(0, v));

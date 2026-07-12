@@ -1,5 +1,6 @@
-import React, { useMemo, useRef } from "react";
+import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Environment, ContactShadows } from "@react-three/drei";
 import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
 import * as THREE from "three";
 import TruckModel from "./TruckModel.jsx";
@@ -54,6 +55,35 @@ export default function Scene({ progressRef }) {
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
     []
   );
+  // Cap resolution harder on phones/low-power GPUs where this scene is heaviest.
+  const coarse = useMemo(
+    () => window.matchMedia("(pointer: coarse)").matches,
+    []
+  );
+
+  // ── Render only while the cinematic act is actually on screen ──────────
+  // R3F's default frameloop renders EVERY frame for the component's whole
+  // life — so once you scroll down to the cards/login the GPU is still
+  // drawing this bloom+shadow scene behind a hidden canvas, stealing frames
+  // from the scroll. We watch the flow element that spans the act and switch
+  // the loop off the moment it leaves the viewport (and back on before it
+  // returns), which is the single biggest smoothness win on this page.
+  const [active, setActive] = useState(true);
+  useEffect(() => {
+    if (reduced) {
+      // Nothing animates under reduced-motion: let it settle, then freeze.
+      const t = setTimeout(() => setActive(false), 900);
+      return () => clearTimeout(t);
+    }
+    const act = document.getElementById("cine-act");
+    if (!act) return;
+    const io = new IntersectionObserver(
+      ([entry]) => setActive(entry.isIntersecting),
+      { rootMargin: "300px 0px 300px 0px" } // resume just before it re-enters
+    );
+    io.observe(act);
+    return () => io.disconnect();
+  }, [reduced]);
 
   return (
     <div
@@ -63,33 +93,50 @@ export default function Scene({ progressRef }) {
     >
       <Canvas
         shadows
-        dpr={[1, 1.75]}
+        frameloop={active ? "always" : "never"}
+        dpr={coarse ? [1, 1.25] : [1, 1.75]}
         camera={{ position: cameraPose(reduced ? 0.82 : 0).pos, fov: 32, near: 0.1, far: 260 }}
         gl={{ antialias: false, powerPreference: "high-performance" }}
       >
         <color attach="background" args={[FOG_COLOR]} />
         <fog attach="fog" args={[FOG_COLOR, 26, 90]} />
 
-        {/* key light — warm, casts the hero shadow */}
+        {/* image-based lighting — realistic city reflections on the truck's
+            paint & metal. Suspends while the HDR loads, hence the wrapper. */}
+        <Suspense fallback={null}>
+          <Environment preset="city" />
+        </Suspense>
+
+        {/* key light — warm, adds directional self-shadowing on top of the IBL */}
         <directionalLight
           position={[8, 14, 6]}
-          intensity={2.1}
+          intensity={1.7}
           color="#ffffff"
           castShadow
-          shadow-mapSize={2048}
+          shadow-mapSize={1024}
           shadow-bias={-0.0002}
         />
         {/* brand rims — lime kick from behind, purple wash from the flank */}
-        <spotLight position={[-14, 7, -9]} intensity={90} color="#84cc16" angle={0.5} penumbra={1} distance={60} />
+        <spotLight position={[-14, 7, -9]} intensity={90} color="#84D12A" angle={0.5} penumbra={1} distance={60} />
         <spotLight position={[6, 9, 14]} intensity={70} color="#8b5cf6" angle={0.55} penumbra={1} distance={60} />
-        <hemisphereLight intensity={0.35} color="#9db4d8" groundColor="#0b1220" />
-        <ambientLight intensity={0.22} />
+        <hemisphereLight intensity={0.3} color="#9db4d8" groundColor="#0b1220" />
+        <ambientLight intensity={0.18} />
 
         <Ground />
-        <TruckModel progressRef={progressRef} />
+        <TruckModel />
+        {/* soft contact shadow pooled directly under the grounded truck */}
+        <ContactShadows
+          position={[0, 0.012, 0]}
+          scale={16}
+          resolution={1024}
+          blur={2.6}
+          opacity={0.62}
+          far={6}
+          color="#05070d"
+        />
         <CameraRig progressRef={progressRef} reduced={reduced} />
 
-        <EffectComposer multisampling={4}>
+        <EffectComposer multisampling={coarse ? 0 : 2}>
           {/* subtle glow on headlights / speculars */}
           <Bloom intensity={0.85} luminanceThreshold={0.85} luminanceSmoothing={0.2} mipmapBlur />
           {/* dramatic edge falloff */}

@@ -196,9 +196,8 @@
   gap: 8px;
   padding: 7px 14px;
   border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.75);
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(226, 232, 240, 0.9);
   box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
   font-family: var(--ld-font-mono);
   font-size: 11px;
@@ -257,9 +256,8 @@
 
 .ld-float-card {
   position: absolute;
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: 0.75rem;
   padding: 12px 16px;
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.1);
@@ -383,18 +381,20 @@
   color: var(--ld-ink-2);
 }
 
-/* glass card */
+/* glass card — no live backdrop blur: these sit over solid section
+   backgrounds where a real-time blur samples a flat colour (wasted GPU
+   and the #1 scroll-jank source when ~17 of them re-blur every frame).
+   The frosted look is faked with a near-opaque fill + inset top highlight. */
 .ld-glass {
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: 1rem;
   padding: 24px;
-  box-shadow: 0 10px 34px rgba(15, 23, 42, 0.07);
+  box-shadow: 0 10px 34px rgba(15, 23, 42, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.65);
   transition: transform 260ms var(--ld-ease), box-shadow 260ms var(--ld-ease);
 }
 
-.ld-glass:hover { transform: translateY(-4px); box-shadow: 0 18px 44px rgba(15, 23, 42, 0.11); }
+.ld-glass:hover { transform: translate3d(0, -4px, 0); box-shadow: 0 18px 44px rgba(15, 23, 42, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.65); }
 
 /* problem stats */
 .ld-why-grid {
@@ -449,9 +449,12 @@
 
 .ld-bar-fill {
   height: 100%;
+  width: 100%;
   border-radius: 6px;
-  width: 0%;
-  transition: width 1.3s var(--ld-ease);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 1.3s var(--ld-ease);
+  will-change: transform;
 }
 
 .ld-bar-fill.grad { background: var(--ld-grad); }
@@ -569,9 +572,8 @@
   gap: 12px;
   padding: 12px 18px 12px 12px;
   border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--ld-line);
   box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
 }
 
@@ -749,6 +751,127 @@
   color: var(--ld-ink-3);
 }
 
+/* ---------- motion enhancements (all GPU-composited) ---------- */
+
+/* scroll-driven layers animate continuously → promote them (and only them) */
+[data-pspeed], [data-depth] { will-change: transform; }
+
+/* top scroll-progress bar — scaleX is transform-only, zero reflow */
+.ld-progress {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  z-index: 70;
+  background: var(--ld-grad);
+  transform: scaleX(0);
+  transform-origin: left center;
+  will-change: transform;
+  pointer-events: none;
+}
+
+/* decorative parallax glow blobs — pre-blurred once, then only transformed */
+.ld-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: 0.12;
+  pointer-events: none;
+  z-index: 0;
+  will-change: transform;
+}
+
+/* card 3D tilt — driven by CSS vars the pointer handler updates (transform only) */
+.ld-tilt {
+  transform: perspective(900px)
+             rotateX(var(--ry, 0deg))
+             rotateY(var(--rx, 0deg))
+             translate3d(0, 0, 0);
+  transition: transform 220ms var(--ld-ease);
+  transform-style: preserve-3d;
+}
+.ld-tilt.is-tilting { transition: transform 80ms linear; }
+/* a tiltable glass card: fold the hover lift into the tilt so .ld-glass:hover's
+   translateY doesn't cancel it (equal specificity → later source wins) */
+.ld-glass.ld-tilt:hover {
+  transform: perspective(900px)
+             rotateX(var(--ry, 0deg))
+             rotateY(var(--rx, 0deg))
+             translate3d(0, -4px, 0);
+}
+
+/* magnetic button — handler nudges via CSS vars, transform only */
+.ld-magnetic { transition: transform 260ms var(--ld-ease); }
+.ld-magnetic.is-pulled { transition: transform 120ms var(--ld-ease); }
+
+/* animated gradient sweep on the hero gradient words */
+.ld-h1 .grad, .ld-h1 .grad-p {
+  background-size: 200% 100%;
+  animation: ld-grad-pan 6s ease-in-out infinite alternate;
+}
+@keyframes ld-grad-pan {
+  from { background-position: 0% 50%; }
+  to { background-position: 100% 50%; }
+}
+
+/* ---------- parallax image bands (local royalty-free photos) ---------- */
+.ld-pband {
+  position: relative;
+  min-height: 62vh;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  isolation: isolate; /* keep the image layer's z-index local to the band */
+}
+.ld-pband-tall { min-height: 80vh; }
+
+/* the moving photo layer — oversized so vertical drift never reveals an edge.
+   transform-only (translate3d) → GPU-composited, no reflow. */
+.ld-pband-img {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -15%;
+  height: 130%;
+  background-size: cover;
+  background-position: center;
+  will-change: transform;
+  z-index: 0;
+}
+
+/* readability scrim + brand tint so overlaid text stays legible while it moves */
+.ld-pband-scrim { position: absolute; inset: 0; z-index: 1; }
+.ld-pband-light .ld-pband-scrim {
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.82) 0%, rgba(15, 23, 42, 0.5) 46%, rgba(15, 23, 42, 0.12) 100%);
+}
+.ld-pband-dark .ld-pband-scrim {
+  background:
+    radial-gradient(130% 120% at 22% 46%, rgba(11, 18, 32, 0.5), rgba(11, 18, 32, 0.9)),
+    linear-gradient(90deg, rgba(11, 18, 32, 0.92) 0%, rgba(11, 18, 32, 0.35) 62%, rgba(11, 18, 32, 0.62) 100%);
+}
+
+.ld-pband-content { position: relative; z-index: 2; padding: 66px 0; }
+.ld-pband-content .ld-h2 { color: #f8fafc; }
+.ld-pband-content .ld-kicker { color: #a3e635; }
+.ld-pband-content .ld-kicker::before { background: #a3e635; }
+.ld-pband-sub {
+  font-size: 17px;
+  line-height: 1.62;
+  color: rgba(248, 250, 252, 0.84);
+  max-width: 540px;
+  margin-top: 4px;
+}
+.ld-pband-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 26px;
+  font-family: var(--ld-font-mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(248, 250, 252, 0.72);
+}
+
 /* ---------- reveal defaults (JS animates in) ---------- */
 [data-reveal] { opacity: 0; transform: translate3d(0, 36px, 0); }
 
@@ -770,14 +893,19 @@
   .ld-nav-links { display: none; }
   .ld-section { padding: 70px 0; }
   .ld-steps, .ld-impact-grid { grid-template-columns: 1fr; }
-  /* parallax off on small screens — static composition instead */
-  [data-pspeed], [data-depth] { transform: none !important; }
+  /* parallax + depth toys off on small screens — static composition instead */
+  [data-pspeed], [data-depth], [data-pband] { transform: none !important; }
+  .ld-orb { display: none; }
+  .ld-tilt { transform: none !important; }
+  .ld-pband, .ld-pband-tall { min-height: 52vh; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .ld-root [data-pspeed],
   .ld-root [data-depth],
-  .ld-root [data-reveal] {
+  .ld-root [data-pband],
+  .ld-root [data-reveal],
+  .ld-tilt {
     transform: none !important;
     opacity: 1 !important;
     transition: none !important;
@@ -786,4 +914,6 @@
   .ld-marquee-track { animation: none; }
   .ld-scroll-hint .wheel::after { animation: none; }
   .ld-cursor { animation: none; }
+  .ld-h1 .grad, .ld-h1 .grad-p { animation: none; }
+  .ld-progress, .ld-orb { display: none; }
 }

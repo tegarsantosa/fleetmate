@@ -2,9 +2,10 @@ import React, { useEffect, useState, useMemo, useCallback, useRef } from "react"
 import { Link } from "react-router-dom";
 import Container3D from "../components/Container3D.jsx";
 import { api, packing } from "../lib/api.js";
+import { manifestFromPlan, downloadManifestCsv, openLoadingGuide } from "../lib/AutoPackLogic.js";
 import { useToast } from "../components/Toast.jsx";
 import {
-  Camera, Zap, RefreshCw, Truck, Box, Cpu, ListOrdered, Send, RotateCcw, Sparkles, Scan, X, Undo2,
+  Camera, Zap, RefreshCw, Truck, Box, Cpu, ListOrdered, Send, RotateCcw, Sparkles, Scan, X, Undo2, FileDown, Printer,
 } from "lucide-react";
 
 // Mirrors the packing service's select_best_container(): a vehicle is eligible
@@ -228,6 +229,24 @@ export default function Visualizer() {
       : 0;
   const isDispatchingSelected = dispatchAnimId === selectedId;
 
+  // Turn the REAL packed load plan into a warehouse-ready CSV manifest: the
+  // physics-aware layering/depth/weight logic lives in lib/AutoPackLogic.js.
+  const handleDownloadManifest = () => {
+    if (!selectedContainer || itemsForSelected.length === 0) return;
+    const manifest = manifestFromPlan(itemsForSelected, selectedContainer);
+    downloadManifestCsv(manifest, `manifest_${selectedContainer.code}_${new Date().toISOString().slice(0, 10)}.csv`);
+    toast(`Manifest exported — ${manifest.length} boxes, sequenced deepest & heaviest first`, "success");
+  };
+
+  // Operator-facing output: a printable visual loading guide (top-down map +
+  // step cards) built from the same physics-aware manifest.
+  const handlePrintGuide = () => {
+    if (!selectedContainer || itemsForSelected.length === 0) return;
+    const manifest = manifestFromPlan(itemsForSelected, selectedContainer);
+    openLoadingGuide(manifest, { vehicle: `${selectedContainer.name} (${selectedContainer.code})` });
+    toast("Loading guide opened — printable for the dock crew", "info");
+  };
+
   const setPreset = (p) => {
     setViewPreset(p);
     setPresetKey((k) => k + 1);
@@ -450,6 +469,27 @@ export default function Visualizer() {
                       ))}
                     </div>
                   </details>
+                )}
+
+                {totalBoxesLoaded > 0 && (
+                  <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                    <button
+                      className="btn-cta"
+                      style={{ flex: 1, justifyContent: "center" }}
+                      onClick={handlePrintGuide}
+                      title="Open a printable, visual loading guide for the dock crew: top-down map + step-by-step, deepest & heaviest first"
+                    >
+                      <Printer size={14} /> Print Loading Guide
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      style={{ justifyContent: "center" }}
+                      onClick={handleDownloadManifest}
+                      title="Export the raw manifest CSV (for systems / records)"
+                    >
+                      <FileDown size={14} /> CSV
+                    </button>
+                  </div>
                 )}
 
                 {selectedContainer.status === "shipped" ? (

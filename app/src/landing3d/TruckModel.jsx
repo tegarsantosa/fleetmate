@@ -1,110 +1,124 @@
 import React, { useMemo, useRef, useState, useEffect, Suspense } from "react";
-import { useFrame, useGraph } from "@react-three/fiber";
 import { useGLTF, RoundedBox, Edges } from "@react-three/drei";
 import * as THREE from "three";
-import { truckAttitude, CABIN_GREEN } from "./cinematics.js";
+import { CABIN_GREEN } from "./cinematics.js";
 
 /**
  * Cargo-truck hero model.
  *
- * Primary path: a low-poly GLB at /models/truck.glb (drop the asset into
- * app/public/models/truck.glb — the folder is volume-mounted, no rebuild
- * needed). Its cabin meshes are located via useGraph and repainted with the
- * brand green while preserving each material's roughness/metalness.
+ * Primary path: a low-poly GLB — the "Cargo Truck – Low poly" by LagzDesign —
+ * placed at app/public/models/cargo_truck.glb. That folder is volume-mounted
+ * into the dev container, so dropping the file in needs no rebuild/restart.
+ * Its CABIN meshes are located and repainted vivid lime (#84D12A) while every
+ * material's roughness / metalness / maps are preserved. Tyres and the cargo
+ * box are never touched.
  *
  * Fallback path: if the GLB is absent, a fully procedural truck renders the
- * same silhouette so the cinematic never breaks.
+ * same silhouette so the hero never breaks.
  *
- * Convention: centered at origin, resting on y = 0, grille facing -X.
+ * GROUNDED PHYSICS (hard rule): the truck is always planted flat on y = 0 with
+ * every wheel on the ground. It never pitches or rolls — all cinematic motion
+ * comes from the camera (see Scene.jsx), not from tilting the vehicle.
+ *
+ * Convention: centred at the origin, resting on y = 0, grille facing -X.
  */
 
-const TRUCK_GLB_URL = "/models/truck.glb";
+const TRUCK_GLB_URL = "/models/cargo_truck.glb";
+
+/* If auto-detection ever misses your model's cab, set this to the exact mesh
+   name (case-insensitive substring) and it wins over the heuristics below. */
+const CABIN_MESH_OVERRIDE = "";
 
 /* Names that mark cabin/body meshes across common low-poly truck exports. */
-const CABIN_NAME_HINTS = ["cab", "cabin", "body", "chassis_cab", "truck_body"];
+const CABIN_HINTS = ["cab", "cabin", "driver", "head", "front", "truck_body", "chassis_cab", "body"];
+/* Names that must NEVER be recoloured (tyres, the cargo box, glass, etc.). */
+const EXCLUDE_HINTS = [
+  "wheel", "tire", "tyre", "rim", "hub",
+  "cargo", "box", "container", "trailer", "bed", "crate", "pallet",
+  "glass", "window", "windshield", "light", "lamp", "head_light", "headlight",
+  "ground", "shadow", "plane", "floor",
+];
 
-function isCabinNode(name = "") {
+function classify(name = "") {
   const n = name.toLowerCase();
-  return CABIN_NAME_HINTS.some((hint) => n.includes(hint));
+  if (CABIN_MESH_OVERRIDE && n.includes(CABIN_MESH_OVERRIDE.toLowerCase())) return "cabin";
+  if (EXCLUDE_HINTS.some((h) => n.includes(h))) return "exclude";
+  if (CABIN_HINTS.some((h) => n.includes(h))) return "cabin";
+  return "unknown";
 }
 
-function GltfTruck({ progressRef }) {
-  const group = useRef();
+/* Recolour a mesh's material(s) to the brand green, cloning first so the cached
+   GLTF isn't mutated for other consumers, and changing ONLY `.color`. */
+function repaintCabin(mesh, color) {
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  const painted = mats.map((mat) => {
+    if (!mat || !mat.color) return mat;
+    const clone = mat.clone();
+    clone.color.copy(color); // roughness / metalness / maps stay intact
+    return clone;
+  });
+  mesh.material = Array.isArray(mesh.material) ? painted : painted[0];
+}
+
+function GltfTruck() {
   const { scene } = useGLTF(TRUCK_GLB_URL);
-  const cloned = useMemo(() => scene.clone(true), [scene]);
-  const { nodes } = useGraph(cloned);
 
-  /* Normalize + repaint once per clone. */
-  useMemo(() => {
-    // --- dynamic material modification: find cabin meshes, keep PBR props ---
+  const model = useMemo(() => {
+    const root = scene.clone(true);
     const cabinColor = new THREE.Color(CABIN_GREEN);
-    const repaint = (mesh) => {
-      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      mats.forEach((mat) => {
-        if (!mat || !mat.color) return;
-        // clone so the cached GLTF isn't mutated for other consumers,
-        // then change ONLY the color — roughness/metalness/maps stay intact
-        const painted = mat.clone();
-        painted.color.copy(cabinColor);
-        if (Array.isArray(mesh.material)) {
-          mesh.material = mesh.material.map((m) => (m === mat ? painted : m));
-        } else {
-          mesh.material = painted;
-        }
-      });
-    };
 
-    let repainted = 0;
-    Object.values(nodes).forEach((node) => {
-      if (node.isMesh && isCabinNode(node.name)) {
-        repaint(node);
-        repainted++;
+    // Gather meshes with their classification.
+    const meshes = [];
+    root.traverse((n) => {
+      if (n.isMesh) {
+        n.castShadow = true;
+        n.receiveShadow = true;
+        meshes.push({ mesh: n, kind: classify(n.name) });
       }
     });
-    // no recognizable cabin names → paint the largest mesh (typical for
-    // single-mesh low-poly exports)
-    if (repainted === 0) {
-      let largest = null;
-      let volume = 0;
-      cloned.traverse((n) => {
-        if (!n.isMesh) return;
-        const box = new THREE.Box3().setFromObject(n);
-        const s = box.getSize(new THREE.Vector3());
-        const v = s.x * s.y * s.z;
-        if (v > volume) { volume = v; largest = n; }
-      });
-      if (largest) repaint(largest);
-    }
 
-    cloned.traverse((n) => {
-      if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; }
+    // 1) Repaint every explicitly-named cabin mesh.
+    let painted = 0;
+    meshes.forEach(({ mesh, kind }) => {
+      if (kind === "cabin") { repaintCabin(mesh, cabinColor); painted++; }
     });
 
-    // --- normalize footprint: ~9.2 m long, grounded, centered, nose to -X ---
-    const bounds = new THREE.Box3().setFromObject(cloned);
+    // 2) Nothing named a cabin? Pick the front-most substantial mesh that is
+    //    NOT on the exclude list — for a box truck that's the cab, at the
+    //    grille end. We measure in the model's own space, then normalise below.
+    if (painted === 0) {
+      const bounds = new THREE.Box3().setFromObject(root);
+      const size = bounds.getSize(new THREE.Vector3());
+      const axis = size.x >= size.z ? "x" : "z"; // long axis = truck length
+      let best = null;
+      let bestFront = Infinity;
+      meshes.forEach(({ mesh, kind }) => {
+        if (kind === "exclude") return;
+        const b = new THREE.Box3().setFromObject(mesh);
+        const s = b.getSize(new THREE.Vector3());
+        if (s.x * s.y * s.z < (size.x * size.y * size.z) * 0.02) return; // skip tiny detail meshes
+        const front = b.min[axis]; // most negative = front end
+        if (front < bestFront) { bestFront = front; best = mesh; }
+      });
+      if (best) repaintCabin(best, cabinColor);
+    }
+
+    // --- normalise footprint: ~9.2 m long, grounded, centred, nose to -X ---
+    const bounds = new THREE.Box3().setFromObject(root);
     const size = bounds.getSize(new THREE.Vector3());
     const longest = Math.max(size.x, size.z) || 1;
-    const scale = 9.2 / longest;
-    cloned.scale.setScalar(scale);
-    // most vehicle exports run along +Z; rotate the long axis onto X
-    if (size.z > size.x) cloned.rotation.y = Math.PI / 2;
-    const after = new THREE.Box3().setFromObject(cloned);
+    root.scale.setScalar(9.2 / longest);
+    if (size.z > size.x) root.rotation.y = Math.PI / 2; // long axis onto X
+    const after = new THREE.Box3().setFromObject(root);
     const center = after.getCenter(new THREE.Vector3());
-    cloned.position.x -= center.x;
-    cloned.position.z -= center.z;
-    cloned.position.y -= after.min.y;
-    return cloned;
-  }, [cloned, nodes]);
+    root.position.x -= center.x;
+    root.position.z -= center.z;
+    root.position.y -= after.min.y; // plant on the ground
+    return root;
+  }, [scene]);
 
-  useFrame((state) => {
-    applyAttitude(group.current, progressRef, state.clock.elapsedTime);
-  });
-
-  return (
-    <group ref={group}>
-      <primitive object={cloned} />
-    </group>
-  );
+  // Grounded & still — no per-frame rotation. Camera owns the motion.
+  return <primitive object={model} />;
 }
 
 /* ---------- procedural fallback (no external asset required) ---------- */
@@ -141,30 +155,25 @@ function Wheel({ position }) {
   );
 }
 
-function ProceduralTruck({ progressRef }) {
-  const group = useRef();
+function ProceduralTruck() {
   const wallTex = useMemo(() => makeCorrugatedTexture(), []);
   const paint = { color: CABIN_GREEN, metalness: 0.45, roughness: 0.35 };
   const glass = { color: "#0b1120", metalness: 0.9, roughness: 0.08 };
 
-  // layout: total ≈ 9.2 m on X, front at -4.6
+  // layout: total ≈ 9.2 m on X, front grille at -4.6, resting on y = 0
   const W = 2.5;
-  const cabX = -3.4; // cab center
-  const boxX = 1.15; // container center
-
-  useFrame((state) => {
-    applyAttitude(group.current, progressRef, state.clock.elapsedTime);
-  });
+  const cabX = -3.4; // cab centre
+  const boxX = 1.15; // container centre
 
   return (
-    <group ref={group}>
+    <group>
       {/* chassis */}
       <mesh position={[0, 0.85, 0]} castShadow>
         <boxGeometry args={[9.0, 0.32, W * 0.8]} />
         <meshStandardMaterial color="#111827" metalness={0.6} roughness={0.45} />
       </mesh>
 
-      {/* cab — brand green */}
+      {/* cab — brand green (#84D12A) */}
       <RoundedBox args={[2.3, 2.0, W]} radius={0.1} smoothness={3} position={[cabX, 2.0, 0]} castShadow>
         <meshStandardMaterial {...paint} />
       </RoundedBox>
@@ -217,7 +226,7 @@ function ProceduralTruck({ progressRef }) {
         </mesh>
       ))}
 
-      {/* cargo box */}
+      {/* cargo box — untouched neutral corrugated material */}
       <mesh position={[boxX, 2.25, 0]} castShadow>
         <boxGeometry args={[6.4, 2.75, W]} />
         <meshStandardMaterial map={wallTex} metalness={0.4} roughness={0.6} />
@@ -229,23 +238,12 @@ function ProceduralTruck({ progressRef }) {
         <meshStandardMaterial color={CABIN_GREEN} metalness={0.4} roughness={0.4} />
       </mesh>
 
-      {/* wheels — front axle + rear tandem, both sides */}
+      {/* wheels — front axle + rear tandem, both sides, all planted on y≈0.55 */}
       {[-3.6, 1.6, 2.9].map((x) =>
         [W / 2, -W / 2].map((z) => <Wheel key={`${x}${z}`} position={[x, 0.55, z]} />)
       )}
     </group>
   );
-}
-
-/* ---------- shared attitude driver ---------- */
-
-function applyAttitude(obj, progressRef, time) {
-  if (!obj) return;
-  const p = progressRef?.current?.p ?? 0;
-  const { roll, pitch, yaw, bob } = truckAttitude(p, time);
-  // rotation order ZXY: roll (z) and pitch (x) read as true banking under yaw
-  obj.rotation.set(pitch, yaw, roll, "YXZ");
-  obj.position.y = bob;
 }
 
 /* ---------- availability probe + error boundary ---------- */
@@ -264,7 +262,7 @@ class GltfBoundary extends React.Component {
   }
 }
 
-export default function TruckModel({ progressRef }) {
+export default function TruckModel() {
   const [glbAvailable, setGlbAvailable] = useState(false);
 
   useEffect(() => {
@@ -272,7 +270,8 @@ export default function TruckModel({ progressRef }) {
     fetch(TRUCK_GLB_URL, { method: "HEAD" })
       .then((r) => {
         const type = r.headers.get("content-type") || "";
-        // vite's SPA fallback answers 200 text/html for missing files
+        // Vite's SPA fallback answers 200 text/html for a missing file — treat
+        // only a real binary response as "present".
         if (!cancelled && r.ok && !type.includes("html")) {
           setGlbAvailable(true);
           useGLTF.preload(TRUCK_GLB_URL);
@@ -282,12 +281,12 @@ export default function TruckModel({ progressRef }) {
     return () => { cancelled = true; };
   }, []);
 
-  const fallback = <ProceduralTruck progressRef={progressRef} />;
+  const fallback = <ProceduralTruck />;
   if (!glbAvailable) return fallback;
   return (
     <GltfBoundary fallback={fallback}>
       <Suspense fallback={fallback}>
-        <GltfTruck progressRef={progressRef} />
+        <GltfTruck />
       </Suspense>
     </GltfBoundary>
   );
