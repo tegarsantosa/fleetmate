@@ -106,10 +106,7 @@ export default function AutoPackPanel() {
                     <tr>
                       <th className="px-3 py-2.5 font-semibold">#</th>
                       <th className="px-3 py-2.5 font-semibold">Box ID</th>
-                      <th className="px-3 py-2.5 font-semibold">Weight</th>
-                      <th className="px-3 py-2.5 font-semibold">Depth Zone</th>
-                      <th className="px-3 py-2.5 font-semibold">Side</th>
-                      <th className="px-3 py-2.5 font-semibold">Layer</th>
+                      <th className="px-3 py-2.5 font-semibold">Penempatan / Placement</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5 text-gray-300">
@@ -118,15 +115,11 @@ export default function AutoPackPanel() {
                       return (
                         <tr key={r.Sequence_No} className="hover:bg-white/5">
                           <td className="px-3 py-2 font-mono tabular-nums text-gray-500">{r.Sequence_No}</td>
-                          <td className="px-3 py-2 font-mono font-medium text-white">{r.Box_ID}</td>
-                          <td className="px-3 py-2">
-                            <span className="rounded px-1.5 py-0.5 text-[11px] font-semibold" style={{ color: ws.color, background: ws.bg }}>
-                              {r.Weight_Class}
-                            </span>
+                          <td className="px-3 py-2 font-mono font-medium text-white">
+                            <span className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle" style={{ background: ws.color }} title={r.Weight_Class} />
+                            {r.Box_ID}
                           </td>
-                          <td className="px-3 py-2 text-gray-400">{r.Depth_Zone}</td>
-                          <td className="px-3 py-2">{r.Placement_Side}</td>
-                          <td className="px-3 py-2 text-gray-400">{r.Layering_Level}</td>
+                          <td className="px-3 py-2 text-gray-300">{r.Placement}</td>
                         </tr>
                       );
                     })}

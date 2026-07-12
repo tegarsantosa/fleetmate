@@ -66,16 +66,15 @@ function layerFromHeight(z, containerHeight = 240) {
   return { level: LAYERS[2], idx: 2 };
 }
 
-/* ---------- action note (clear instruction for a picker on the floor) ---------- */
+/* ---------- action note (handling caution — the WHERE now lives in Placement) ---------- */
 
-function actionNote(depthIdx, side, layerIdx, weight) {
-  const deep = ["deepest (paling dalam)", "middle (tengah)", "near the door (dekat pintu)"][depthIdx];
-  const sideWord = { Left: "left (kiri)", Right: "right (kanan)", Center: "center (tengah)" }[side];
+function actionNote(layerIdx, weight) {
   if (layerIdx === 0) {
-    const care = weight === "Heavy" ? " This is a HEAVY box — floor only, never stack it high." : "";
-    return `Place on the FLOOR, slide to the ${deep} ${sideWord} corner.${care}`;
+    return weight === "Heavy"
+      ? "Box BERAT — wajib di lantai, rapatkan, jangan ditumpuk tinggi."
+      : "Taruh di lantai, dorong rapat tanpa celah.";
   }
-  return `Stack on Layer ${layerIdx} at the ${deep} ${sideWord} position. Do NOT place heavier boxes on top.`;
+  return "Tumpuk rapi; jangan taruh box yang lebih berat di atas box ini.";
 }
 
 /* ---------- the physics sort (produces Sequence_No) ---------- */
@@ -90,50 +89,192 @@ function physicsSort(rows) {
   });
 }
 
-/** Finalise a set of partial rows: enforce Heavy⇒Layer 1, sort, number, note. */
+/** Finalise a set of partial rows: enforce Heavy⇒Layer 1, sort, number, note,
+ *  then work out each box's placement RELATIVE to an already-loaded box. */
 function finalize(partials) {
-  // Rule: a Heavy box can never live above the floor.
+  // Rule: a Heavy box can never live above the floor. Only nudge geometry-less
+  // rows — when we have real coordinates the engine's placement is authoritative
+  // (a box actually resting at z>0 must not be relabelled "floor").
   partials.forEach((p) => {
-    if (p.Weight_Class === "Heavy" && p._layerIdx > 0) {
+    if (!p._geo && p.Weight_Class === "Heavy" && p._layerIdx > 0) {
       p._layerIdx = 0;
       p.Layering_Level = LAYERS[0];
     }
   });
   const sorted = physicsSort(partials);
-  return sorted.map((p, i) => ({
+  const rows = sorted.map((p, i) => ({
     Sequence_No: i + 1,
     Box_ID: p.Box_ID,
     Weight_Class: p.Weight_Class,
     Depth_Zone: p.Depth_Zone,
     Placement_Side: p.Placement_Side,
     Layering_Level: p.Layering_Level,
-    Action_Note: actionNote(p._depthIdx, p.Placement_Side, p._layerIdx, p.Weight_Class),
+    Action_Note: actionNote(p._layerIdx, p.Weight_Class),
+    _geo: p._geo || null,
+    _layerIdx: p._layerIdx,
   }));
+  assignRelations(rows); // sets each row.Placement
+  return rows;
+}
+
+/* ---------- relational placement ("beside box #2 / on top of box #3") ---------- */
+
+const TOUCH_TOL = 4; // cm slack for treating two faces as touching
+
+// overlap length of two 1-D intervals [a0,a1] & [b0,b1]
+function overlap1d(a0, a1, b0, b1) {
+  return Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
+}
+// shared footprint area (x·y) of two boxes
+function footprintOverlap(g, o) {
+  return (
+    overlap1d(g.x, g.x + g.l, o.x, o.x + o.l) *
+    overlap1d(g.y, g.y + g.w, o.y, o.y + o.w)
+  );
+}
+
+/**
+ * For each row (in loading order) describe WHERE it goes relative to a box that
+ * is ALREADY loaded (an earlier Sequence_No): stacked on top of one, or set
+ * beside one. Falls back to a plain zone sentence for anchor/edge boxes or when
+ * no geometry is available (e.g. the dummy path passes geometry too, so this is
+ * mostly the real-plan and first-box cases).
+ */
+function assignRelations(rows) {
+  rows.forEach((r, i) => {
+    const g = r._geo;
+    if (!g) {
+      r.Placement = i === 0 ? "Box pertama — mulai di lantai pojok paling dalam" : zoneSentence(r);
+      return;
+    }
+    const earlier = rows.slice(0, i).filter((o) => o._geo);
+
+    // 1) SUPPORT — something whose TOP meets this box's BOTTOM, footprints overlap.
+    if (g.z > TOUCH_TOL) {
+      let best = null,
+        bestArea = 0;
+      for (const o of earlier) {
+        const og = o._geo;
+        if (Math.abs(og.z + og.h - g.z) > TOUCH_TOL) continue;
+        const area = footprintOverlap(g, og);
+        if (area > bestArea) {
+          bestArea = area;
+          best = o;
+        }
+      }
+      if (best) {
+        r.Placement = `Tumpuk DI ATAS box #${best.Sequence_No} (${best.Box_ID})`;
+        return;
+      }
+    }
+
+    // 2) BESIDE — same floor level, sharing a vertical face with an earlier box.
+    let best = null,
+      bestContact = 0,
+      dir = "";
+    for (const o of earlier) {
+      const og = o._geo;
+      if (Math.abs(og.z - g.z) > TOUCH_TOL) continue; // must sit at the same level
+      const zOv = overlap1d(g.z, g.z + g.h, og.z, og.z + og.h);
+      if (zOv <= TOUCH_TOL) continue;
+      const xOv = overlap1d(g.x, g.x + g.l, og.x, og.x + og.l);
+      const yOv = overlap1d(g.y, g.y + g.w, og.y, og.y + og.w);
+      // touching across WIDTH (y) → left/right neighbour
+      if (xOv > TOUCH_TOL) {
+        if (Math.abs(g.y - (og.y + og.w)) <= TOUCH_TOL && xOv > bestContact) { bestContact = xOv; best = o; dir = "kanan"; }
+        else if (Math.abs(og.y - (g.y + g.w)) <= TOUCH_TOL && xOv > bestContact) { bestContact = xOv; best = o; dir = "kiri"; }
+      }
+      // touching along LENGTH (x) → in front (door side) / behind
+      if (yOv > TOUCH_TOL) {
+        if (Math.abs(g.x - (og.x + og.l)) <= TOUCH_TOL && yOv > bestContact) { bestContact = yOv; best = o; dir = "depan"; }
+        else if (Math.abs(og.x - (g.x + g.l)) <= TOUCH_TOL && yOv > bestContact) { bestContact = yOv; best = o; dir = "belakang"; }
+      }
+    }
+    if (best) {
+      const word = { kanan: "sebelah KANAN", kiri: "sebelah KIRI", depan: "DEPAN (arah pintu)", belakang: "BELAKANG" }[dir];
+      r.Placement = `Rapatkan di ${word} box #${best.Sequence_No} (${best.Box_ID})`;
+      return;
+    }
+
+    // 3) anchor / no touching neighbour → absolute location
+    r.Placement = i === 0 ? "Box pertama — mulai di lantai pojok PALING DALAM, kiri" : zoneSentence(r);
+  });
+}
+
+// Plain-language fallback location ("Layer 1 - Lantai · Paling Dalam · Sisi Kiri")
+// used for the first box and any box with no touching neighbour.
+const DEPTH_TEXT = ["Paling Dalam", "Tengah", "Dekat Pintu"];
+const SIDE_TEXT = { Left: "Kiri", Center: "Tengah", Right: "Kanan" };
+const LAYER_TEXT = ["Layer 1 - Lantai", "Layer 2 - Tumpuk", "Layer 3 - Atas"];
+
+function zoneSentence(row) {
+  const layer = LAYER_TEXT[layerNumOf(row) - 1] || row.Layering_Level;
+  const depth = DEPTH_TEXT[depthIdxOf(row)] || row.Depth_Zone;
+  const side = SIDE_TEXT[row.Placement_Side] || row.Placement_Side;
+  return `${layer} · ${depth} · Sisi ${side}`;
+}
+
+/* ---------- geometry → partial row (shared by dummy + real mappers) ---------- */
+
+function partialFromGeo(b, cont, weightOverride) {
+  const L = Number(cont.length_cm) || 600;
+  const W = Number(cont.width_cm) || 235;
+  const H = Number(cont.height_cm) || 239;
+  const cx = (b.x + b.l / 2) / L;
+  const cy = (b.y + b.w / 2) / W;
+  const depth = depthZoneFromFraction(cx);
+  const layer = layerFromHeight(b.z, H);
+  const vol = b.l * b.w * b.h;
+  const weight = weightOverride || (vol >= 200000 ? "Heavy" : vol >= 60000 ? "Medium" : "Light");
+  return {
+    Box_ID: b.id,
+    Weight_Class: weight,
+    Depth_Zone: depth.zone,
+    Placement_Side: sideFromFraction(cy),
+    Layering_Level: layer.level,
+    _depthIdx: depth.idx,
+    _layerIdx: layer.idx,
+    _geo: { x: b.x, y: b.y, z: b.z, l: b.l, w: b.w, h: b.h },
+  };
 }
 
 /* ---------- 1) synthetic, physics-valid dummy manifest ---------- */
 
 export function buildDummyManifest(count = 16) {
-  // A believable inbound shipment: a heavy base, medium mid-fill, light top-off.
-  const mix = [];
-  for (let i = 0; i < count; i++) {
-    const r = i / count;
-    const weight = r < 0.34 ? "Heavy" : r < 0.7 ? "Medium" : "Light";
-    // heavy → floor & deep; light → stacked & near the door
-    const depthIdx = weight === "Heavy" ? i % 2 : weight === "Medium" ? 1 + (i % 2) - (i % 3 === 0 ? 1 : 0) : 1 + (i % 2);
-    const layerIdx = weight === "Heavy" ? 0 : weight === "Medium" ? (i % 3 === 0 ? 1 : 0) : (i % 2) + 1;
-    const side = SIDES[i % 3];
-    mix.push({
-      Box_ID: `PKG-${String(i + 1).padStart(3, "0")}`,
-      Weight_Class: weight,
-      Depth_Zone: DEPTH_ZONES[Math.min(2, Math.max(0, depthIdx))],
-      Placement_Side: side,
-      Layering_Level: LAYERS[Math.min(2, layerIdx)],
-      _depthIdx: Math.min(2, Math.max(0, depthIdx)),
-      _layerIdx: Math.min(2, layerIdx),
-    });
+  // Lay a believable load at real coordinates so the relational placement
+  // ("beside #2 / on top of #3") comes out naturally: a full heavy/medium floor
+  // grid first, then lighter boxes stacked directly on the floor boxes.
+  const CONT = { length_cm: 600, width_cm: 235, height_cm: 239 };
+  const FL = 118, FW = 76, FH = 92;          // floor box: length·width·height (cm)
+  const COLS = 5, ROWS = 3;                   // 5 deep × 3 across = 15 floor slots
+  const floorTarget = Math.min(count, Math.ceil(count * 0.7), COLS * ROWS);
+
+  const boxes = [];
+  let i = 0;
+  for (let col = 0; col < COLS && i < floorTarget; col++) {
+    for (let row = 0; row < ROWS && i < floorTarget; row++) {
+      boxes.push({
+        id: `PKG-${String(i + 1).padStart(3, "0")}`,
+        x: col * FL, y: row * FW, z: 0, l: FL, w: FW, h: FH,
+        weight: col < 2 ? "Heavy" : "Medium", // heaviest against the front wall
+      });
+      i++;
+    }
   }
-  return finalize(mix);
+  // stack the remaining (light) boxes on top of floor boxes, front-to-back
+  let s = 0;
+  while (i < count && boxes.length) {
+    const base = boxes[s % Math.max(1, boxes.filter((b) => b.z === 0).length)];
+    boxes.push({
+      id: `PKG-${String(i + 1).padStart(3, "0")}`,
+      x: base.x, y: base.y, z: base.z + base.h, l: FL, w: FW, h: 70,
+      weight: "Light",
+    });
+    i++; s++;
+  }
+
+  const partials = boxes.map((b) => partialFromGeo(b, CONT, b.weight));
+  return finalize(partials);
 }
 
 /* ---------- 2) map a REAL engine plan → the same manifest ---------- */
@@ -151,29 +292,18 @@ export function manifestFromPlan(items, container = {}) {
   const H = Number(container.height_cm) || 239;
 
   const partials = items.map((it, i) => {
-    const l = Number(it.placed_length_cm);
-    const w = Number(it.placed_width_cm);
-    const h = Number(it.placed_height_cm);
-    const cx = (Number(it.pos_x) + l / 2) / L; // depth fraction (0 = deepest)
-    const cy = (Number(it.pos_y) + w / 2) / W; // side fraction
-    const z = Number(it.pos_z);                // floor height
-
-    const depth = depthZoneFromFraction(cx);
-    const layer = layerFromHeight(z, H);
-    // Weight class by ABSOLUTE volume (semantic: a big box is heavy regardless
-    // of what else is in the load). ~0.2 m³ ≈ Heavy, ~0.06 m³ ≈ Medium.
-    const vol = l * w * h; // cm³
-    const weight = vol >= 200000 ? "Heavy" : vol >= 60000 ? "Medium" : "Light";
-
-    return {
-      Box_ID: it.boxLabel || `PKG-${String(i + 1).padStart(3, "0")}`,
-      Weight_Class: weight,
-      Depth_Zone: depth.zone,
-      Placement_Side: sideFromFraction(cy),
-      Layering_Level: layer.level,
-      _depthIdx: depth.idx,
-      _layerIdx: layer.idx,
+    const b = {
+      id: it.boxLabel || `PKG-${String(i + 1).padStart(3, "0")}`,
+      x: Number(it.pos_x),
+      y: Number(it.pos_y),
+      z: Number(it.pos_z),
+      l: Number(it.placed_length_cm),
+      w: Number(it.placed_width_cm),
+      h: Number(it.placed_height_cm),
     };
+    // Weight class by ABSOLUTE volume (a big box is heavy regardless of the rest
+    // of the load): ~0.2 m³ ≈ Heavy, ~0.06 m³ ≈ Medium — handled in partialFromGeo.
+    return partialFromGeo(b, { length_cm: L, width_cm: W, height_cm: H });
   });
 
   return finalize(partials);
@@ -187,28 +317,14 @@ function csvField(value) {
 }
 
 /* The CSV columns actually written to disk — no Weight_Class, and one clear
- * Placement sentence instead of three coded columns. */
+ * relational Placement ("Tumpuk di atas box #3 …") instead of coded columns. */
 export const CSV_HEADERS = ["Sequence_No", "Box_ID", "Placement", "Action_Note"];
-
-// Plain-language pieces used to build the readable Placement sentence.
-const DEPTH_TEXT = ["Paling Dalam", "Tengah", "Dekat Pintu"];
-const SIDE_TEXT = { Left: "Kiri", Center: "Tengah", Right: "Kanan" };
-const LAYER_TEXT = ["Layer 1 - Lantai", "Layer 2 - Tumpuk", "Layer 3 - Atas"];
-
-/** Collapse a row's layer/depth/side into one readable instruction, e.g.
- *  "Layer 1 - Lantai · Paling Dalam · Sisi Kiri". */
-function placementText(row) {
-  const layer = LAYER_TEXT[layerNumOf(row) - 1] || row.Layering_Level;
-  const depth = DEPTH_TEXT[depthIdxOf(row)] || row.Depth_Zone;
-  const side = SIDE_TEXT[row.Placement_Side] || row.Placement_Side;
-  return `${layer} · ${depth} · Sisi ${side}`;
-}
 
 export function manifestToCsv(rows) {
   const lines = [CSV_HEADERS.map(csvField).join(",")];
   for (const row of rows) {
     lines.push(
-      [row.Sequence_No, row.Box_ID, placementText(row), row.Action_Note]
+      [row.Sequence_No, row.Box_ID, row.Placement, row.Action_Note]
         .map(csvField)
         .join(",")
     );
@@ -308,6 +424,7 @@ export function buildLoadingGuideHtml(manifest, meta = {}) {
             <span class="wtag" style="color:${WEIGHT_COLOR[r.Weight_Class]};border-color:${WEIGHT_COLOR[r.Weight_Class]}">${esc(r.Weight_Class)}</span>
             <span class="zone">${esc(r.Depth_Zone)} · ${esc(r.Placement_Side)} · ${esc(r.Layering_Level)}</span>
           </div>
+          <div class="step-place">📍 ${esc(r.Placement)}</div>
           <div class="step-note">${esc(r.Action_Note)}</div>
         </div>
       </li>`
@@ -347,6 +464,7 @@ export function buildLoadingGuideHtml(manifest, meta = {}) {
   .step-top{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   .step-top b{ font-size:15px; } .wtag{ border:1.5px solid; border-radius:5px; padding:1px 7px; font-size:11px; font-weight:800; text-transform:uppercase; }
   .zone{ font-size:12px; color:var(--mut); } .step-note{ font-size:13px; margin-top:3px; }
+  .step-place{ font-size:14px; font-weight:700; margin-top:4px; color:var(--ink); }
   .noprint{ margin:18px 0; text-align:center; }
   .btn{ background:var(--lime); color:#0a0a0a; border:none; border-radius:8px; padding:11px 22px; font-weight:800; font-size:14px; cursor:pointer; }
   @media print{ body{ background:#fff; } .sheet{ max-width:none; padding:0; } .noprint{ display:none; } h2{ -webkit-print-color-adjust:exact; print-color-adjust:exact; } .seq,.step-no{ -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
