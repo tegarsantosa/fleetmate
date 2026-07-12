@@ -15,9 +15,14 @@
  *   • manifestFromPlan(items, cont)  → maps a REAL packing plan (box positions
  *                                       from the engine) into the same manifest
  *
- * Both return rows carrying EXACTLY these fields (the CSV columns, in order):
- *   Sequence_No · Box_ID · Weight_Class · Depth_Zone · Placement_Side ·
- *   Layering_Level · Action_Note
+ * Both return rich rows carrying: Sequence_No · Box_ID · Weight_Class ·
+ * Depth_Zone · Placement_Side · Layering_Level · Action_Note. These feed the
+ * on-screen tables and the visual loading guide.
+ *
+ * The exported CSV is deliberately SLIMMER and human-readable (see CSV_HEADERS):
+ *   Sequence_No · Box_ID · Placement · Action_Note
+ * — no Weight_Class, and the three placement fields collapsed into one plain
+ * "Layer · Zona · Sisi" sentence a picker can read at a glance.
  */
 
 /* ---------- vocabulary (human-readable, bilingual where it matters) ---------- */
@@ -181,10 +186,32 @@ function csvField(value) {
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
+/* The CSV columns actually written to disk — no Weight_Class, and one clear
+ * Placement sentence instead of three coded columns. */
+export const CSV_HEADERS = ["Sequence_No", "Box_ID", "Placement", "Action_Note"];
+
+// Plain-language pieces used to build the readable Placement sentence.
+const DEPTH_TEXT = ["Paling Dalam", "Tengah", "Dekat Pintu"];
+const SIDE_TEXT = { Left: "Kiri", Center: "Tengah", Right: "Kanan" };
+const LAYER_TEXT = ["Layer 1 - Lantai", "Layer 2 - Tumpuk", "Layer 3 - Atas"];
+
+/** Collapse a row's layer/depth/side into one readable instruction, e.g.
+ *  "Layer 1 - Lantai · Paling Dalam · Sisi Kiri". */
+function placementText(row) {
+  const layer = LAYER_TEXT[layerNumOf(row) - 1] || row.Layering_Level;
+  const depth = DEPTH_TEXT[depthIdxOf(row)] || row.Depth_Zone;
+  const side = SIDE_TEXT[row.Placement_Side] || row.Placement_Side;
+  return `${layer} · ${depth} · Sisi ${side}`;
+}
+
 export function manifestToCsv(rows) {
-  const lines = [MANIFEST_HEADERS.join(",")];
+  const lines = [CSV_HEADERS.map(csvField).join(",")];
   for (const row of rows) {
-    lines.push(MANIFEST_HEADERS.map((h) => csvField(row[h])).join(","));
+    lines.push(
+      [row.Sequence_No, row.Box_ID, placementText(row), row.Action_Note]
+        .map(csvField)
+        .join(",")
+    );
   }
   // UTF-8 BOM + CRLF → opens cleanly (and keeps the Indonesian text) in Excel
   return "﻿" + lines.join("\r\n");
