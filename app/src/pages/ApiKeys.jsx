@@ -69,7 +69,7 @@ export default function ApiKeys() {
                 <td style={{ fontWeight: 600 }}>{k.name}</td>
                 <td>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <code className="mono" style={{ background: "var(--bg)", padding: "4px 8px", borderRadius: 6 }}>
+                    <code className="mono" style={{ background: "var(--bg-surface)", padding: "4px 8px", borderRadius: 6, fontSize: 12 }}>
                       {k.key.slice(0, 12)}...{k.key.slice(-4)}
                     </code>
                     <button className="btn-secondary btn-sm" onClick={() => handleCopy(k.key, k.id)}>

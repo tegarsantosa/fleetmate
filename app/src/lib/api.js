@@ -25,7 +25,10 @@ export const api = {
   deleteContainer: (id) => request(`${API_BASE_URL}/containers/${id}`, { method: "DELETE" }),
   resetContainer: (id) => request(`${API_BASE_URL}/containers/${id}/reset`, { method: "POST" }),
   dispatchContainer: (id) => request(`${API_BASE_URL}/containers/${id}/dispatch`, { method: "POST" }),
+  recallContainer: (id) => request(`${API_BASE_URL}/containers/${id}/recall`, { method: "POST" }),
+  removePlanItem: (itemId) => request(`${API_BASE_URL}/packing-plans/items/${itemId}`, { method: "DELETE" }),
   listBoxes: (status) => request(`${API_BASE_URL}/boxes${status ? `?status=${status}` : ""}`),
+  createBox: (data) => request(`${API_BASE_URL}/boxes`, { method: "POST", ...jsonBody(data) }),
   listPlans: () => request(`${API_BASE_URL}/packing-plans`),
   getDashboard: () => request(`${API_BASE_URL}/analytics/dashboard`),
   getMe: () => request(`${API_BASE_URL}/accounts/me`),
@@ -41,10 +44,10 @@ export const api = {
 };
 
 export const vision = {
-  scan: (leftBlob, rightBlob, label) => {
+  scan: (topBlob, sideBlob, label) => {
     const form = new FormData();
-    form.append("camera_left", leftBlob, "left.jpg");
-    if (rightBlob) form.append("camera_right", rightBlob, "right.jpg");
+    form.append("camera_top", topBlob, "top.jpg");
+    if (sideBlob) form.append("camera_side", sideBlob, "side.jpg");
     const query = label ? `?label=${encodeURIComponent(label)}` : "";
     return request(`${VISION_BASE_URL}/scan${query}`, {
       method: "POST",
@@ -60,6 +63,26 @@ export const packing = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ box_ids: boxIds ?? null }),
     }),
+};
+
+async function ping(url) {
+  try {
+    const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export const health = {
+  check: async () => {
+    const [api, visionSvc, packingSvc] = await Promise.all([
+      ping(API_BASE_URL),
+      ping(VISION_BASE_URL),
+      ping(PACKING_BASE_URL),
+    ]);
+    return { api, vision: visionSvc, packing: packingSvc };
+  },
 };
 
 export { API_BASE_URL, VISION_BASE_URL, PACKING_BASE_URL };

@@ -24,21 +24,21 @@ async def health():
 
 @app.post("/scan")
 async def scan_box(
-    camera_left: UploadFile = File(...),
-    camera_right: UploadFile | None = File(None),
+    camera_top: UploadFile = File(...),
+    camera_side: UploadFile | None = File(None),
     label: str | None = None,
 ):
-    left_bytes = await camera_left.read()
-    right_bytes = await camera_right.read() if camera_right is not None else None
+    top_bytes = await camera_top.read()
+    side_bytes = await camera_side.read() if camera_side is not None else None
 
-    dimensions = estimate_dimensions(left_bytes, right_bytes)
+    dimensions = estimate_dimensions(top_bytes, side_bytes)
 
     async with httpx.AsyncClient(timeout=30) as client:
         scan_response = await client.post(
             f"{API_BASE_URL}/scans",
             files={
-                "camera_left": ("left.jpg", left_bytes, "image/jpeg"),
-                **({"camera_right": ("right.jpg", right_bytes, "image/jpeg")} if right_bytes else {}),
+                "camera_top": ("top.jpg", top_bytes, "image/jpeg"),
+                **({"camera_side": ("side.jpg", side_bytes, "image/jpeg")} if side_bytes else {}),
             },
         )
         scan_response.raise_for_status()

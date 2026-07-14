@@ -20,14 +20,14 @@ echo "checking vision-service health..."
 curl -sf "${VISION_URL}/health" | tee /dev/stderr
 echo
 
-CURL_ARGS=(-sS -X POST "${VISION_URL}/scan?label=${LABEL}" -F "camera_left=@${LEFT_IMAGE};type=image/jpeg")
+CURL_ARGS=(-sS -X POST "${VISION_URL}/scan?label=${LABEL}" -F "camera_top=@${LEFT_IMAGE};type=image/jpeg")
 
 if [[ -n "$RIGHT_IMAGE" ]]; then
   if [[ ! -f "$RIGHT_IMAGE" ]]; then
     echo "right image not found: $RIGHT_IMAGE"
     exit 1
   fi
-  CURL_ARGS+=(-F "camera_right=@${RIGHT_IMAGE};type=image/jpeg")
+  CURL_ARGS+=(-F "camera_side=@${RIGHT_IMAGE};type=image/jpeg")
 fi
 
 echo "uploading ${LEFT_IMAGE} ${RIGHT_IMAGE:+and ${RIGHT_IMAGE}} as label='${LABEL}'..."

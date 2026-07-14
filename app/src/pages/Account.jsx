@@ -50,7 +50,7 @@ export default function Account() {
           <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24, marginTop: 12 }}>
             <div style={{
               width: 56, height: 56, borderRadius: "50%",
-              background: "linear-gradient(135deg, var(--accent) 0%, #a855f7 100%)",
+              background: "var(--accent-blue)",
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 22, fontWeight: 700, color: "white"
             }}>
@@ -81,15 +81,15 @@ export default function Account() {
             <div>
               <div className="form-group">
                 <label>Username</label>
-                <div style={{ padding: "10px 14px", background: "var(--bg)", borderRadius: "var(--radius)", fontSize: 13 }}>{user.username}</div>
+                <div style={{ padding: "10px 14px", background: "var(--bg-surface)", borderRadius: 10, fontSize: 13 }}>{user.username}</div>
               </div>
               <div className="form-group">
                 <label>Email</label>
-                <div style={{ padding: "10px 14px", background: "var(--bg)", borderRadius: "var(--radius)", fontSize: 13 }}>{user.email}</div>
+                <div style={{ padding: "10px 14px", background: "var(--bg-surface)", borderRadius: 10, fontSize: 13 }}>{user.email}</div>
               </div>
               <div className="form-group">
                 <label>Member Since</label>
-                <div style={{ padding: "10px 14px", background: "var(--bg)", borderRadius: "var(--radius)", fontSize: 13 }}>{new Date(user.created_at).toLocaleDateString()}</div>
+                <div style={{ padding: "10px 14px", background: "var(--bg-surface)", borderRadius: 10, fontSize: 13 }}>{new Date(user.created_at).toLocaleDateString()}</div>
               </div>
               <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
                 <button className="btn-primary" onClick={() => setEditing(true)}>Edit Profile</button>
@@ -104,7 +104,7 @@ export default function Account() {
           <div style={{ marginTop: 12 }}>
             <div className="form-group">
               <label>Password</label>
-              <div style={{ padding: "10px 14px", background: "var(--bg)", borderRadius: "var(--radius)", fontSize: 13, color: "var(--text-secondary)" }}>••••••••••••</div>
+              <div style={{ padding: "10px 14px", background: "var(--bg-surface)", borderRadius: 10, fontSize: 13, color: "var(--text-secondary)" }}>••••••••••••</div>
             </div>
             <button className="btn-secondary" disabled>Change Password</button>
             <p style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 8 }}>Password management is handled by your identity provider.</p>
