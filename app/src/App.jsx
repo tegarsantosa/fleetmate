@@ -1,4 +1,5 @@
 import React, { useEffect, useState, lazy, Suspense } from "react";
+import BRAND_LOGO from "./assets/logo.png";
 import { NavLink, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import CameraController from "./pages/CameraController.jsx";
 import Visualizer from "./pages/Visualizer.jsx";
@@ -29,7 +30,7 @@ const NAV = [
   { to: "/account", label: "Account", icon: UserRound },
 ];
 
-const BRAND_LOGO = "/logo.png";
+
 
 function SidebarUser({ theme, onToggleTheme }) {
   const [user, setUser] = useState(null);

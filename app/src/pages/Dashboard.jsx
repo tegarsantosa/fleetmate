@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../lib/api.js";
+import { api, packing } from "../lib/api.js";
 import { useCountUp, useRiseIn, fmtInt, prefersReducedMotion } from "../lib/motion.js";
 import anime from "animejs";
 import {
-  Activity, Package, Truck, ArrowUpRight, ScanLine, CalendarClock, Gauge, RefreshCw, Boxes,
+  Activity, Package, Truck, ArrowUpRight, ScanLine, CalendarClock, Gauge, RefreshCw, Boxes, TrendingUp,
+  Sparkles, AlertTriangle, CheckCircle2, Loader2,
 } from "lucide-react";
 
 /* ---------- charts ---------- */
@@ -84,6 +85,102 @@ function DonutChart({ percentage, color, label, size = 116 }) {
       <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center" }}>
         <div className="mono-num" style={{ fontSize: 19, fontWeight: 700 }}>{Math.round(percentage)}%</div>
         <div style={{ fontSize: 8, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", maxWidth: 70 }}>{label}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- throughput trend (fed by the 7D/14D/30D range toggle) ---------- */
+function TrendChart({ boxSeries, planSeries, days }) {
+  const [hover, setHover] = useState(null);
+  const wrapRef = useRef(null);
+  const n = boxSeries.length || 1;
+  const max = Math.max(1, ...boxSeries, ...planSeries);
+  const W = 320, H = 96, HDISP = 150; // viewBox units + rendered px height (for HTML overlays)
+  const X = (i) => (i / (n - 1 || 1)) * W;
+  const Y = (v) => H - (v / max) * H;
+  const line = (arr) => arr.map((v, i) => `${i ? "L" : "M"} ${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(" ");
+  const boxLine = line(boxSeries);
+  const planLine = line(planSeries);
+  const areaPath = `${boxLine} L ${W} ${H} L 0 ${H} Z`;
+
+  const totalBoxes = boxSeries.reduce((a, b) => a + b, 0);
+  const totalPlans = planSeries.reduce((a, b) => a + b, 0);
+
+  const dayLabel = (i) => {
+    const back = n - 1 - i;
+    return back === 0 ? "Today" : `${back}d ago`;
+  };
+  const onMove = (e) => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    setHover(Math.round(ratio * (n - 1)));
+  };
+  const leftPct = (i) => `${(X(i) / W) * 100}%`;
+  const topPx = (v) => (Y(v) / H) * HDISP;
+
+  return (
+    <div className="card flush" data-animate="rise">
+      <div className="card-header">
+        <h3><TrendingUp size={13} /> Throughput Trend</h3>
+        <div className="spacer" />
+        <span className="mono-num" style={{ fontSize: 11, color: "var(--text-muted)" }}>Last {days} days</span>
+      </div>
+      <div className="card-body">
+        <div style={{ display: "flex", gap: 18, marginBottom: 12, fontSize: 11 }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--text-secondary)" }}>
+            <span style={{ width: 10, height: 10, borderRadius: 3, background: "var(--data-blue)" }} /> Boxes scanned <b className="mono-num">{totalBoxes}</b>
+          </span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--text-secondary)" }}>
+            <span style={{ width: 12, height: 0, borderTop: "2px dashed var(--accent)" }} /> Plans packed <b className="mono-num">{totalPlans}</b>
+          </span>
+        </div>
+
+        <div ref={wrapRef} onMouseMove={onMove} onMouseLeave={() => setHover(null)} style={{ position: "relative", width: "100%", height: HDISP, cursor: "crosshair" }}>
+          <svg width="100%" height={HDISP} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ display: "block", position: "absolute", inset: 0 }}>
+            <defs>
+              <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="var(--data-blue)" stopOpacity="0.30" />
+                <stop offset="100%" stopColor="var(--data-blue)" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            {[0, 0.5, 1].map((g) => (
+              <line key={g} x1="0" x2={W} y1={H * g} y2={H * g} stroke="var(--border-color)" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.55" />
+            ))}
+            <path d={areaPath} fill="url(#trendFill)" />
+            <path d={boxLine} fill="none" stroke="var(--data-blue)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+            <path d={planLine} fill="none" stroke="var(--accent)" strokeWidth="2" strokeDasharray="4 3" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+          </svg>
+
+          {/* crisp HTML overlays (SVG is aspect-distorted, so dots/guide live here) */}
+          {hover != null && (
+            <>
+              <div style={{ position: "absolute", left: leftPct(hover), top: 0, height: HDISP, width: 1, background: "var(--text-muted)", opacity: 0.45, pointerEvents: "none" }} />
+              {[["var(--data-blue)", boxSeries[hover]], ["var(--accent)", planSeries[hover]]].map(([c, v], k) => (
+                <div key={k} style={{ position: "absolute", left: leftPct(hover), top: topPx(v), width: 8, height: 8, borderRadius: "50%", background: c, boxShadow: "0 0 0 2px var(--bg-elevated)", transform: "translate(-50%, -50%)", pointerEvents: "none" }} />
+              ))}
+              <div style={{
+                position: "absolute", top: 0, left: leftPct(hover),
+                transform: `translateX(${hover > (n - 1) / 2 ? "-108%" : "8%"})`,
+                background: "var(--bg-elevated)", border: "1px solid var(--border-color)", borderRadius: 8,
+                padding: "6px 9px", fontSize: 11, pointerEvents: "none", whiteSpace: "nowrap", zIndex: 5,
+                boxShadow: "0 6px 20px rgba(0,0,0,.35)",
+              }}>
+                <div style={{ color: "var(--text-muted)", marginBottom: 3 }}>{dayLabel(hover)}</div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "var(--data-blue)" }} /> {boxSeries[hover]} boxes</div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}><span style={{ width: 8, height: 8, borderRadius: 2, background: "var(--accent)" }} /> {planSeries[hover]} plans</div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)", marginTop: 8 }}>
+          <span>{dayLabel(0)}</span>
+          <span>{dayLabel(Math.floor((n - 1) / 2))}</span>
+          <span>{dayLabel(n - 1)}</span>
+        </div>
       </div>
     </div>
   );
@@ -190,6 +287,34 @@ export default function Dashboard() {
 
   useEffect(() => { load(); }, [load]);
 
+  const [isPacking, setIsPacking] = useState(false);
+  const [packMsg, setPackMsg] = useState(null);
+  const packingRef = useRef(false);
+  const runAutoPack = useCallback(async () => {
+    if (packingRef.current) return; // ref guard: state updates async, so a fast
+    packingRef.current = true;      // double-click could otherwise slip through
+    setIsPacking(true);
+    setPackMsg(null);
+    try {
+      const result = await packing.run();
+      await load();
+      const placed = result.plans.reduce((s, p) => s + p.box_count, 0);
+      const vehicles = new Set(result.plans.map((p) => p.container_id)).size;
+      if (result.unplaced_boxes?.length) {
+        setPackMsg({ tone: "warn", text: `${result.unplaced_boxes.length} box tidak muat di kendaraan mana pun` });
+      } else if (placed > 0) {
+        setPackMsg({ tone: "ok", text: `${placed} box dimuat ke ${vehicles} kendaraan` });
+      } else {
+        setPackMsg({ tone: "muted", text: "Tidak ada box baru untuk dimuat" });
+      }
+    } catch (err) {
+      setPackMsg({ tone: "warn", text: "Auto-Pack gagal — cek layanan packing" });
+    } finally {
+      packingRef.current = false;
+      setIsPacking(false);
+    }
+  }, [load]);
+
   const derived = useMemo(() => {
     const active = containers.filter((c) => c.status !== "shipped");
     const fleetMax = active.reduce((s, c) => s + Number(c.max_volume_cm3), 0);
@@ -207,11 +332,17 @@ export default function Dashboard() {
     const scannedVolume = boxes.reduce((s, b) => s + Number(b.volume_cm3 || 0), 0);
     const pendingCount = boxes.filter((b) => b.status === "pending").length;
 
+    const wasted = Math.max(0, fleetMax - fleetUsed);
+    const avgBoxVol = boxes.length ? scannedVolume / boxes.length : 0;
+
     return {
       active: active.length,
       fleetPct: fleetMax > 0 ? (fleetUsed / fleetMax) * 100 : 0,
       fleetUsedM3: fleetUsed / 1_000_000,
       fleetMaxM3: fleetMax / 1_000_000,
+      wastedM3: wasted / 1_000_000,
+      freePct: fleetMax > 0 ? (wasted / fleetMax) * 100 : 0,
+      extraBoxEst: avgBoxVol > 0 ? Math.floor(wasted / avgBoxVol) : 0,
       statusCounts,
       scannedVolume,
       pendingCount,
@@ -259,6 +390,48 @@ export default function Dashboard() {
     ];
     return events.sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 9);
   }, [boxes, plans, shipments, containerCode]);
+
+  const alerts = useMemo(() => {
+    const out = [];
+    // 1) low-confidence scans that should be re-checked
+    const lowConf = boxes.filter((b) => Number(b.confidence) < 0.8);
+    if (lowConf.length) {
+      out.push({
+        tone: "warn",
+        title: `${lowConf.length} scan confidence rendah`,
+        sub: `Akurasi < 80% — sebaiknya scan ulang untuk dimensi yang tepat`,
+        to: "/inventory",
+        cta: "Tinjau",
+      });
+    }
+    // 2) boxes scanned but not yet assigned to a plan
+    const pending = boxes.filter((b) => b.status === "pending");
+    if (pending.length) {
+      out.push({
+        tone: "info",
+        title: `${pending.length} box belum masuk rencana muat`,
+        sub: `Jalankan AI Auto-Pack untuk menempatkannya ke kendaraan`,
+        to: "/visualizer",
+        cta: "Buka Simulator",
+      });
+    }
+    // 3) vehicles being loaded but far from full → consolidation opportunity
+    const underloaded = containers.filter(
+      (c) => c.status === "loading" && Number(c.max_volume_cm3) > 0 &&
+        (Number(c.used_volume_cm3) / Number(c.max_volume_cm3)) < 0.5
+    );
+    underloaded.forEach((c) => {
+      const util = (Number(c.used_volume_cm3) / Number(c.max_volume_cm3)) * 100;
+      out.push({
+        tone: "warn",
+        title: `${c.code} baru terisi ${util.toFixed(0)}%`,
+        sub: `Ruang banyak tersisa — konsolidasikan muatan sebelum dikirim`,
+        to: "/inventory",
+        cta: "Kelola",
+      });
+    });
+    return out;
+  }, [boxes, containers]);
 
   if (error) return <div className="alert error">{error}</div>;
 
@@ -344,6 +517,7 @@ export default function Dashboard() {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, marginBottom: 16, alignItems: "start" }}>
+        <div style={{ display: "grid", gap: 16 }}>
         <div className="card flush" data-animate="rise">
           <div className="card-header">
             <h3><Activity size={13} /> Fleet Capacity</h3>
@@ -403,6 +577,9 @@ export default function Dashboard() {
           </div>
         </div>
 
+          <TrendChart boxSeries={derived.boxSeries} planSeries={derived.planSeries} days={rangeDays} />
+        </div>
+
         <div className="card flush" data-animate="rise">
           <div className="card-header">
             <h3><Activity size={13} /> Live Activity</h3>
@@ -423,6 +600,100 @@ export default function Dashboard() {
               </div>
             ))}
             {activityFeed.length === 0 && <div className="empty-state">No activity yet — scan your first box</div>}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16, alignItems: "start" }}>
+        {/* Optimization / wasted space — the core "Space Optimization" value */}
+        <div className="card flush" data-animate="rise">
+          <div className="card-header">
+            <h3><Sparkles size={13} /> Optimasi Ruang</h3>
+            <div className="spacer" />
+            <span className="mono-num" style={{ fontSize: 11, color: "var(--text-muted)" }}>armada aktif</span>
+          </div>
+          <div className="card-body">
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+              <span className="mono-num" style={{ fontSize: 34, fontWeight: 700, color: "var(--accent)", lineHeight: 1 }}>
+                {derived.wastedM3.toFixed(1)}
+              </span>
+              <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>m³ kapasitas belum terpakai</span>
+            </div>
+            <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "8px 0 14px" }}>
+              <b className="mono-num" style={{ color: "var(--text-secondary)" }}>{derived.freePct.toFixed(0)}%</b> ruang armada masih kosong
+              {derived.extraBoxEst > 0 && (
+                <> — muat ± <b className="mono-num" style={{ color: "var(--text-secondary)" }}>{derived.extraBoxEst}</b> kotak lagi (ukuran rata-rata)</>
+              )}
+            </p>
+            <div className="capacity-bar" style={{ height: 10 }}>
+              <div className="seg" style={{ width: `${Math.min(derived.fleetPct, 100)}%`, background: "var(--accent)" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 11, color: "var(--text-muted)" }}>
+              <span>Terpakai <b className="mono-num" style={{ color: "var(--text-secondary)" }}>{derived.fleetUsedM3.toFixed(2)} m³</b></span>
+              <span>Total <b className="mono-num" style={{ color: "var(--text-secondary)" }}>{derived.fleetMaxM3.toFixed(2)} m³</b></span>
+            </div>
+
+            <div className="divider" />
+            {derived.pendingCount > 0 ? (
+              <button
+                className="btn-cta"
+                style={{ width: "100%", justifyContent: "center" }}
+                onClick={runAutoPack}
+                disabled={isPacking}
+                title="Muat box yang menunggu ke kendaraan secara otomatis"
+              >
+                {isPacking ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+                {isPacking ? "Mengoptimalkan…" : `Isi Otomatis — ${derived.pendingCount} box menunggu`}
+              </button>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, color: "var(--text-muted)" }}>
+                <span>Tidak ada box menunggu untuk dimuat.</span>
+                <Link to="/camera" style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 600, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 3 }}>
+                  Scan box <ArrowUpRight size={12} />
+                </Link>
+              </div>
+            )}
+            {packMsg && (
+              <div style={{ marginTop: 10, fontSize: 12, fontWeight: 600, color: packMsg.tone === "ok" ? "var(--success)" : packMsg.tone === "warn" ? "var(--warning)" : "var(--text-muted)" }}>
+                {packMsg.text}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Alerts / exceptions — what needs attention */}
+        <div className="card flush" data-animate="rise">
+          <div className="card-header">
+            <h3><AlertTriangle size={13} /> Perlu Perhatian</h3>
+            <div className="spacer" />
+            {alerts.length > 0 && (
+              <span className="badge" style={{ background: "color-mix(in srgb, var(--warning) 16%, transparent)", color: "var(--warning)" }}>
+                {alerts.length}
+              </span>
+            )}
+          </div>
+          <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {alerts.length === 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--text-secondary)", fontSize: 13, padding: "8px 0" }}>
+                <CheckCircle2 size={18} style={{ color: "var(--success)" }} />
+                Semua beres — tidak ada isu yang perlu ditindaklanjuti.
+              </div>
+            )}
+            {alerts.map((a, i) => {
+              const tint = a.tone === "warn" ? "var(--warning)" : "var(--data-blue)";
+              return (
+                <div key={i} style={{ display: "flex", gap: 11, alignItems: "flex-start", paddingBottom: i < alerts.length - 1 ? 10 : 0, borderBottom: i < alerts.length - 1 ? "1px solid var(--border-color)" : "none" }}>
+                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: tint, marginTop: 5, flexShrink: 0 }} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{a.title}</div>
+                    <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 2 }}>{a.sub}</div>
+                  </div>
+                  <Link to={a.to} style={{ fontSize: 11, color: "var(--accent)", textDecoration: "none", fontWeight: 600, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+                    {a.cta} <ArrowUpRight size={12} />
+                  </Link>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

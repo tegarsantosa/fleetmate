@@ -28,7 +28,10 @@
   font-family: var(--ld-font-body);
   color: var(--ld-ink);
   background: var(--ld-bg);
-  overflow-x: hidden;
+  /* `clip` (not `hidden`) — hidden forces overflow-y:auto, turning .ld-root
+     into the nearest scrollport and silently breaking every position:sticky
+     descendant (the pinned truck-drive stage). clip just clips, no scrollport. */
+  overflow-x: clip;
   position: relative;
 }
 
@@ -112,7 +115,7 @@
   cursor: pointer;
 }
 
-.ld-nav-brand img { width: 30px; height: 30px; object-fit: contain; }
+.ld-nav-brand img { width: 48px; height: 48px; object-fit: contain; }
 
 .ld-nav-links { display: flex; gap: 22px; margin-left: auto; }
 
@@ -838,6 +841,51 @@
   z-index: 0;
 }
 
+/* brand duotone grade — the stock photos read as tinted FleetMate footage
+   (lime-green shift over the page's dark navy), not raw color photography */
+.ld-pband-light .ld-pband-img {
+  filter: grayscale(0.75) sepia(0.42) hue-rotate(46deg) saturate(1.55) contrast(1.06) brightness(0.94);
+}
+.ld-pband-dark .ld-pband-img {
+  filter: grayscale(0.7) sepia(0.5) hue-rotate(48deg) saturate(1.35) contrast(1.1) brightness(0.72);
+}
+
+/* foreground accent layer — moves FASTER than the photo (data-pmult) so the
+   two planes visibly separate as the band scrolls: classic bg/fg depth split.
+   Pure CSS shapes, no extra image assets; kept on the right half so the text
+   column (left) keeps its contrast. */
+.ld-pband-fg {
+  position: absolute;
+  left: -4%;
+  right: -4%;
+  top: -18%;
+  height: 136%;
+  z-index: 2;
+  pointer-events: none;
+  will-change: transform;
+}
+.ld-pband-fg i { position: absolute; display: block; }
+.ld-pband-fg .fg-glow {
+  right: -4%;
+  top: 10%;
+  width: 44%;
+  height: 68%;
+  border-radius: 50%;
+  filter: blur(12px);
+}
+.ld-pband-light .ld-pband-fg .fg-glow {
+  background: radial-gradient(closest-side, rgba(132, 209, 42, 0.26), transparent 72%);
+}
+.ld-pband-dark .ld-pband-fg .fg-glow {
+  background: radial-gradient(closest-side, rgba(139, 92, 246, 0.3), transparent 70%);
+}
+.ld-pband-fg .fg-line {
+  height: 1.5px;
+  background: linear-gradient(90deg, transparent, rgba(163, 230, 53, 0.55), transparent);
+}
+.ld-pband-fg .fg-line.a { right: 4%; width: 34%; top: 30%; }
+.ld-pband-fg .fg-line.b { right: 12%; width: 24%; top: 66%; opacity: 0.7; }
+
 /* readability scrim + brand tint so overlaid text stays legible while it moves */
 .ld-pband-scrim { position: absolute; inset: 0; z-index: 1; }
 .ld-pband-light .ld-pband-scrim {
@@ -870,6 +918,102 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(248, 250, 252, 0.72);
+}
+
+/* ---------- pinned truck-drive storytelling ---------- */
+.ld-drive {
+  position: relative;
+  height: 280vh; /* scroll runway: the stage stays pinned across all of it */
+  background: #0b1220;
+}
+.ld-drive-stage {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+.ld-drive-canvas { position: absolute; inset: 0; }
+.ld-drive-kicker {
+  position: absolute;
+  top: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  font-family: var(--ld-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: rgba(163, 230, 53, 0.85);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.ld-drive-callout {
+  position: absolute;
+  left: 7%;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: 400px;
+  z-index: 2;
+  opacity: 0; /* scrubbed in by GSAP */
+  pointer-events: none;
+}
+.ld-drive-callout .k {
+  font-family: var(--ld-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #a3e635;
+  margin-bottom: 12px;
+}
+.ld-drive-callout h3 {
+  font-family: var(--ld-font-head);
+  font-size: clamp(30px, 3.4vw, 44px);
+  font-weight: 800;
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  color: #f8fafc;
+  margin: 0 0 12px;
+}
+.ld-drive-callout p {
+  font-size: 16px;
+  line-height: 1.6;
+  color: rgba(248, 250, 252, 0.76);
+  margin: 0;
+}
+
+/* static fallback (mobile / reduced-motion): plain dark stat band */
+.ld-drive-static { padding: 84px 0; background: #0b1220; }
+.ld-drive-static .ld-kicker::before { background: #a3e635; }
+.ld-drive-static-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  margin-top: 26px;
+}
+.ld-drive-static-card {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 14px;
+  padding: 22px;
+  background: rgba(15, 23, 42, 0.5);
+}
+.ld-drive-static-card .k {
+  font-family: var(--ld-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #a3e635;
+  margin-bottom: 10px;
+}
+.ld-drive-static-card h3 {
+  font-family: var(--ld-font-head);
+  font-size: 20px;
+  font-weight: 800;
+  color: #f8fafc;
+  margin: 0 0 8px;
+}
+.ld-drive-static-card p { font-size: 13.5px; line-height: 1.55; color: rgba(248, 250, 252, 0.68); margin: 0; }
+@media (max-width: 768px) {
+  .ld-drive-static-grid { grid-template-columns: 1fr; }
 }
 
 /* ---------- reveal defaults (JS animates in) ---------- */

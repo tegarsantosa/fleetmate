@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import LOGO from "../assets/logo.png";
 import { useNavigate } from "react-router-dom";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
@@ -12,13 +13,14 @@ import { useToast } from "../components/Toast.jsx";
 import Scene from "../landing3d/Scene.jsx";
 import ScrollOverlay from "../landing3d/ScrollOverlay.jsx";
 import AutoPackPanel from "../landing3d/AutoPackPanel.jsx";
+import TruckDrive from "../landing3d/TruckDrive.jsx";
 import warehouseAisle from "../assets/parallax/warehouse-aisle.webp";
 import portAerial from "../assets/parallax/port-aerial-night.webp";
 import "./Landing.css";
 
 gsap.registerPlugin(ScrollTrigger, ScrollToPlugin);
 
-const LOGO = "/logo.png";
+
 
 const STEPS = [
   { n: "01", icon: ScanLine, title: "Scan & Measure", body: "Boxes captured in 3D by the dual stereo-camera rig at the dock." },
@@ -152,10 +154,18 @@ export default function Landing() {
         // parallax photo bands — drift BAND-RELATIVE (based on the band's own
         // position in the viewport, not absolute scrollY) so the image stays
         // roughly centred as the band passes through and never drifts off.
+        // Layers within a band declare their own speed via data-pmult (fg moves
+        // faster than the photo → depth split), and the photo layer carries
+        // data-pzoom for a Ken Burns scale that peaks when the band is centred.
         for (const img of pBands) {
           const r = img.parentElement.getBoundingClientRect();
           const prog = (r.top + r.height / 2 - vh / 2) / (vh / 2 + r.height / 2); // ~[-1,1]
-          img.style.transform = `translate3d(0, ${(prog * 9).toFixed(2)}%, 0)`;
+          const mult = parseFloat(img.dataset.pmult) || 1;
+          let t = `translate3d(0, ${(prog * 9 * mult).toFixed(2)}%, 0)`;
+          if ("pzoom" in img.dataset) {
+            t += ` scale(${(1 + (1 - Math.min(1, Math.abs(prog))) * 0.08).toFixed(4)})`;
+          }
+          img.style.transform = t;
         }
         ticking = false;
       });
@@ -428,7 +438,10 @@ export default function Landing() {
 
       {/* ========= PARALLAX BAND · warehouse reality ========= */}
       <section className="ld-pband ld-pband-light">
-        <div className="ld-pband-img" data-pband style={{ backgroundImage: `url(${warehouseAisle})` }} />
+        <div className="ld-pband-img" data-pband data-pzoom style={{ backgroundImage: `url(${warehouseAisle})` }} />
+        <div className="ld-pband-fg" data-pband data-pmult="2.6" aria-hidden="true">
+          <i className="fg-glow" /><i className="fg-line a" /><i className="fg-line b" />
+        </div>
         <div className="ld-pband-scrim" />
         <div className="ld-container ld-pband-content">
           <div className="ld-kicker" data-reveal>On the ground</div>
@@ -473,6 +486,9 @@ export default function Landing() {
           </div>
         </div>
       </section>
+
+      {/* ========= PINNED DRIVE · the truck rolls out, stats ride along ========= */}
+      <TruckDrive />
 
       {/* ================= PLATFORM ================= */}
       <section className="ld-section" id="platform">
@@ -563,7 +579,10 @@ export default function Landing() {
 
       {/* ========= PARALLAX BAND · the scale (cinematic) ========= */}
       <section className="ld-pband ld-pband-dark ld-pband-tall">
-        <div className="ld-pband-img" data-pband style={{ backgroundImage: `url(${portAerial})` }} />
+        <div className="ld-pband-img" data-pband data-pzoom style={{ backgroundImage: `url(${portAerial})` }} />
+        <div className="ld-pband-fg" data-pband data-pmult="2.6" aria-hidden="true">
+          <i className="fg-glow" /><i className="fg-line a" /><i className="fg-line b" />
+        </div>
         <div className="ld-pband-scrim" />
         <div className="ld-container ld-pband-content">
           <div className="ld-kicker" data-reveal>The scale</div>
