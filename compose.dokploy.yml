@@ -5,16 +5,16 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: fleetmate
-      POSTGRES_PASSWORD: fleetmate
-      POSTGRES_DB: fleetmate
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./api/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fleetmate -d fleetmate"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -24,8 +24,8 @@ services:
       context: ./api
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://fleetmate:fleetmate@postgres:5432/fleetmate
-      MEDIA_DIR: /media
+      DATABASE_URL: ${DATABASE_URL}
+      MEDIA_DIR: ${MEDIA_DIR}
     volumes:
       - media:/media
     ports:
@@ -39,8 +39,8 @@ services:
       context: ./ai/vision-service
     restart: unless-stopped
     environment:
-      API_BASE_URL: http://api:8000
-      MEDIA_DIR: /media
+      API_BASE_URL: ${API_BASE_URL}
+      MEDIA_DIR: ${MEDIA_DIR}
     volumes:
       - media:/media
     ports:
@@ -53,8 +53,8 @@ services:
       context: ./ai/packing-service
     restart: unless-stopped
     environment:
-      API_BASE_URL: http://api:8000
-      DATABASE_URL: postgresql://fleetmate:fleetmate@postgres:5432/fleetmate
+      API_BASE_URL: ${API_BASE_URL}
+      DATABASE_URL: ${DATABASE_URL}
     ports:
       - "8002:8002"
     depends_on:
@@ -68,9 +68,9 @@ services:
       context: ./app
     restart: unless-stopped
     environment:
-      VITE_API_BASE_URL: http://api:8000
-      VITE_VISION_BASE_URL: http://vision-service:8001
-      VITE_PACKING_BASE_URL: http://packing-service:8002
+      VITE_API_BASE_URL: ${API_BASE_URL}
+      VITE_VISION_BASE_URL: ${VISION_BASE_URL}
+      VITE_PACKING_BASE_URL: ${PACKING_BASE_URL}
     volumes:
       - media:/app/public/media
     ports:
