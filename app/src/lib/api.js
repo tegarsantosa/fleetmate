@@ -1,6 +1,6 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
-const VISION_BASE_URL = import.meta.env.VITE_VISION_BASE_URL || "http://localhost:8001";
-const PACKING_BASE_URL = import.meta.env.VITE_PACKING_BASE_URL || "http://localhost:8002";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? "/api" : "http://localhost:8000");
+const VISION_BASE_URL = import.meta.env.VITE_VISION_BASE_URL || (import.meta.env.DEV ? "/vision" : "http://localhost:8001");
+const PACKING_BASE_URL = import.meta.env.VITE_PACKING_BASE_URL || (import.meta.env.DEV ? "/packing" : "http://localhost:8002");
 
 async function request(url, options = {}) {
   const response = await fetch(url, options);
