@@ -59,6 +59,39 @@ const TEAM = [
   { name: "Jesica Cristy", role: "Technical Writer", color: "#0ea5e9" },
 ];
 
+function normalizeYoutubeUrl(rawUrl) {
+  if (!rawUrl) return "";
+
+  const url = rawUrl.trim();
+  if (!url) return "";
+
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, "");
+
+    if (host === "youtu.be") {
+      return `https://www.youtube.com/embed/${parsed.pathname.replace("/", "")}`;
+    }
+
+    if (host === "youtube.com" || host === "m.youtube.com") {
+      const videoId = parsed.searchParams.get("v");
+      if (videoId) return `https://www.youtube.com/embed/${videoId}`;
+
+      const path = parsed.pathname.replace(/^\/+/, "");
+      if (path.startsWith("embed/")) return `${parsed.origin}/${path}`;
+      if (path.startsWith("shorts/")) return `https://www.youtube.com/embed/${path.split("/")[1]}`;
+    }
+  } catch {
+    // fall back to the raw value when the URL is not a standard web URL
+  }
+
+  return url;
+}
+
+const LANDING_VIDEO_URL = normalizeYoutubeUrl(
+  import.meta.env.VITE_LANDING_VIDEO_URL || "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+);
+
 const TERMINAL_LINES = [
   ["dim", "$ fleetmate --watch dock-A"],
   ["ok", "[vision]  cam-TOP frame captured · 640×480"],
@@ -517,6 +550,31 @@ export default function Landing() {
           </div>
 
           <Terminal />
+        </div>
+      </section>
+
+      {/* ================= VIDEO SHOWCASE ================= */}
+      <section className="ld-section">
+        <div className="ld-container">
+          <div className="ld-video-card ld-glass" data-reveal>
+            <div className="ld-video-copy">
+              <div className="ld-kicker">Watch the story</div>
+              <h3 className="ld-video-title">See FleetMate in motion.</h3>
+              <p className="ld-body" style={{ margin: 0 }}>
+                Drop in any YouTube watch or embed link through the <span className="ld-mono">VITE_LANDING_VIDEO_URL</span> setting to make this section your own.
+              </p>
+            </div>
+            <div className="ld-video-frame">
+              <iframe
+                src={LANDING_VIDEO_URL}
+                title="FleetMate overview video"
+                loading="lazy"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                allowFullScreen
+                referrerPolicy="strict-origin-when-cross-origin"
+              />
+            </div>
+          </div>
         </div>
       </section>
 
