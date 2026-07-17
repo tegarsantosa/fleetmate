@@ -72,9 +72,12 @@ services:
       context: ./app
     restart: unless-stopped
     environment:
-      VITE_API_BASE_URL: http://localhost:8000
-      VITE_VISION_BASE_URL: http://localhost:8001
-      VITE_PACKING_BASE_URL: http://localhost:8002
+      VITE_API_BASE_URL: /api
+      VITE_VISION_BASE_URL: /vision
+      VITE_PACKING_BASE_URL: /packing
+      VITE_API_PROXY_TARGET: http://api:8000
+      VITE_VISION_PROXY_TARGET: http://vision-service:8001
+      VITE_PACKING_PROXY_TARGET: http://packing-service:8002
     volumes:
       - ./app/src:/app/src
       - ./app/public/models:/app/public/models
